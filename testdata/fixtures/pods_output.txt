@@ -1,0 +1,5 @@
+NAME      READY   STATUS    RESTARTS   AGE
+sql-0     1/1     Running   0          10m
+sql-1     1/1     Running   0          10m
+redis-0   1/1     Running   0          5m
+web-0     1/1     Running   0          2m

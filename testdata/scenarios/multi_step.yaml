@@ -1,0 +1,27 @@
+meta:
+  name: "multi-step-test"
+  description: "Test scenario with multiple ordered steps"
+  vars:
+    namespace: "production"
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods", "-n", "production"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME      READY   STATUS             RESTARTS
+        web-0     0/1     CrashLoopBackOff   5
+  
+  - match:
+      argv: ["kubectl", "rollout", "restart", "deployment/web"]
+    respond:
+      exit: 0
+      stdout: "deployment.apps/web restarted"
+  
+  - match:
+      argv: ["kubectl", "get", "pods", "-n", "production"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME      READY   STATUS    RESTARTS
+        web-0     1/1     Running   0

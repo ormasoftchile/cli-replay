@@ -1,0 +1,98 @@
+# golangci-lint configuration for cli-replay
+# https://golangci-lint.run/usage/configuration/
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+linters:
+  default: standard
+  enable:
+    # Additional linters beyond standard
+    - bodyclose
+    - dogsled
+    - dupl
+    - exhaustive
+    - funlen
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - prealloc
+    - revive
+    - unconvert
+    - unparam
+    - whitespace
+    - testifylint
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  
+  funlen:
+    lines: 100
+    statements: 50
+  
+  gocyclo:
+    min-complexity: 15
+  
+  misspell:
+    locale: US
+  
+  nakedret:
+    max-func-lines: 30
+  
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unreachable-code
+
+  staticcheck:
+    checks: ["all"]
+
+issues:
+  exclude-rules:
+    # Allow test files to be longer
+    - path: _test\.go
+      linters:
+        - funlen
+        - dupl
+    
+    # Allow test files to use dot imports for testify
+    - path: _test\.go
+      text: "should not use dot imports"
+
+  max-issues-per-linter: 50
+  max-same-issues: 3

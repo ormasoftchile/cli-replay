@@ -1,0 +1,11 @@
+meta:
+  name: "single-step-test"
+  description: "Test scenario with a single step"
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME    READY   STATUS    RESTARTS   AGE
+        web-0   1/1     Running   0          5m

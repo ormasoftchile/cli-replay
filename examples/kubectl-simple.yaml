@@ -1,0 +1,41 @@
+# Simple kubectl interception example
+# 
+# Usage:
+#   ln -s $(which cli-replay) /tmp/kubectl
+#   export PATH=/tmp:$PATH
+#   export CLI_REPLAY_SCENARIO=$(pwd)/examples/kubectl-simple.yaml
+#   cli-replay run examples/kubectl-simple.yaml
+#   kubectl get pods
+#   kubectl delete pod web-0
+#   kubectl get pods
+#   cli-replay verify examples/kubectl-simple.yaml
+
+meta:
+  name: "kubectl-simple"
+  description: "Simple kubectl pod management scenario"
+
+steps:
+  # Step 1: List pods (unhealthy)
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME    READY   STATUS             RESTARTS   AGE
+        web-0   0/1     CrashLoopBackOff   5          10m
+
+  # Step 2: Delete the problematic pod
+  - match:
+      argv: ["kubectl", "delete", "pod", "web-0"]
+    respond:
+      exit: 0
+      stdout: "pod \"web-0\" deleted\n"
+
+  # Step 3: List pods (healthy after restart)
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME    READY   STATUS    RESTARTS   AGE
+        web-0   1/1     Running   0          30s
