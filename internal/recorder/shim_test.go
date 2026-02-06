@@ -55,7 +55,7 @@ func TestGenerateShim(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.NotEmpty(t, content)
-				
+
 				// Verify content contains expected strings
 				for _, expected := range tt.wantContent {
 					assert.Contains(t, content, expected, "shim should contain %q", expected)
@@ -80,13 +80,13 @@ func TestWriteShim(t *testing.T) {
 	// Verify shim is executable
 	info, err := os.Stat(shimPath)
 	require.NoError(t, err)
-	
+
 	// Check executable bit (mode should have x permission)
 	mode := info.Mode()
-	assert.True(t, mode&0111 != 0, "shim should be executable")
+	assert.NotEqual(t, os.FileMode(0), mode&0111, "shim should be executable")
 
 	// Verify content
-	content, err := os.ReadFile(shimPath)
+	content, err := os.ReadFile(shimPath) //nolint:gosec // test file path
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "#!/usr/bin/env bash")
 	assert.Contains(t, string(content), logPath)
@@ -99,7 +99,7 @@ func TestGenerateAllShims(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "recording.jsonl")
 
 	commands := []string{"kubectl", "docker", "git"}
-	
+
 	err := GenerateAllShims(shimDir, commands, logPath)
 	require.NoError(t, err)
 
@@ -114,7 +114,7 @@ func TestGenerateAllShims(t *testing.T) {
 		// Verify executable
 		info, err := os.Stat(shimPath)
 		require.NoError(t, err)
-		assert.True(t, info.Mode()&0111 != 0, "%s should be executable", cmd)
+		assert.NotEqual(t, os.FileMode(0), info.Mode()&0111, "%s should be executable", cmd)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestGenerateAllShims_EmptyList(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "recording.jsonl")
 
 	err := GenerateAllShims(shimDir, []string{}, logPath)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Shim directory should still be created
 	assert.DirExists(t, shimDir)

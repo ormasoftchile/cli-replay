@@ -1,3 +1,4 @@
+// Package main is the alternative entry point for cli-replay with record support.
 package main
 
 import (

@@ -10,20 +10,24 @@ import (
 )
 
 // shimTemplate is the bash script template that intercepts command executions.
+// It uses explicit paths (/bin/cat, /bin/rm) for internal operations to avoid
+// recursive interception when the shimmed command is one of these utilities.
 const shimTemplate = `#!/usr/bin/env bash
 # cli-replay shim for: %s
 # This script intercepts the command and logs execution details to JSONL
 
-# Prevent recursive shim execution
+# Prevent recursive shim execution by stripping shim dir from PATH
 if [ "$CLI_REPLAY_IN_SHIM" = "1" ]; then
+    export PATH="${PATH#%s:}"
     exec %s "$@"
 fi
 export CLI_REPLAY_IN_SHIM=1
 
 LOGFILE="%s"
+SHIM_DIR="%s"
 
 # Find real command by removing shim directory from PATH
-REAL_COMMAND=$(PATH="${PATH#%s:}" command -v %s 2>/dev/null)
+REAL_COMMAND=$(PATH="${PATH#${SHIM_DIR}:}" command -v %s 2>/dev/null)
 
 # If real command not found, report error
 if [ -z "$REAL_COMMAND" ] || [ "$REAL_COMMAND" = "${BASH_SOURCE[0]}" ]; then
@@ -41,16 +45,28 @@ EXIT_CODE=0
 
 "$REAL_COMMAND" "$@" >"$STDOUT_FILE" 2>"$STDERR_FILE" || EXIT_CODE=$?
 
-# Read captured output
-STDOUT_CONTENT=$(cat "$STDOUT_FILE")
-STDERR_CONTENT=$(cat "$STDERR_FILE")
+# Read captured output into variables using bash builtins to avoid
+# depending on external 'cat' which might be shimmed
+STDOUT_CONTENT=""
+if [ -s "$STDOUT_FILE" ]; then
+    STDOUT_CONTENT=$(< "$STDOUT_FILE")
+fi
+STDERR_CONTENT=""
+if [ -s "$STDERR_FILE" ]; then
+    STDERR_CONTENT=$(< "$STDERR_FILE")
+fi
 
 # Echo output to preserve command behavior
-cat "$STDOUT_FILE"
-cat "$STDERR_FILE" >&2
+# Use /bin/cat with explicit path to avoid shimming recursion
+if [ -s "$STDOUT_FILE" ]; then
+    /bin/cat "$STDOUT_FILE"
+fi
+if [ -s "$STDERR_FILE" ]; then
+    /bin/cat "$STDERR_FILE" >&2
+fi
 
-# Clean up temp files
-rm -f "$STDOUT_FILE" "$STDERR_FILE"
+# Clean up temp files (explicit path to avoid shimming recursion)
+/bin/rm -f "$STDOUT_FILE" "$STDERR_FILE"
 
 # Build argv array for JSON
 ARGV_JSON="[\"%s\""
@@ -61,7 +77,7 @@ for arg in "$@"; do
 done
 ARGV_JSON="$ARGV_JSON]"
 
-# Escape JSON strings
+# Escape JSON strings using sed/awk (unlikely to be shimmed)
 ESC_STDOUT=$(printf '%%s' "$STDOUT_CONTENT" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%%s\\n", $0}' | sed 's/\\n$//')
 ESC_STDERR=$(printf '%%s' "$STDERR_CONTENT" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%%s\\n", $0}' | sed 's/\\n$//')
 
@@ -84,15 +100,16 @@ func GenerateShim(command string, logPath string, shimDir string) (string, error
 		return "", fmt.Errorf("shimDir must be non-empty")
 	}
 
-	// Format the template with command name, log path, and shim directory
+	// Format the template with command name, shim directory, and log path
 	script := fmt.Sprintf(shimTemplate,
-		command,   // Comment line
-		command,   // exec fallback for recursive calls
-		logPath,   // LOGFILE variable
-		shimDir,   // PATH prefix to remove
-		command,   // command -v lookup
-		command,   // Error message
-		command,   // argv[0] in JSON
+		command, // Comment line: shim for
+		shimDir, // Guard: PATH strip prefix
+		command, // Guard: exec fallback
+		logPath, // LOGFILE variable
+		shimDir, // SHIM_DIR variable
+		command, // command -v lookup
+		command, // Error message
+		command, // argv[0] in JSON
 	)
 
 	return script, nil
@@ -107,12 +124,12 @@ func WriteShim(shimPath string, command string, logPath string, shimDir string) 
 
 	// Ensure parent directory exists
 	dir := filepath.Dir(shimPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil { //nolint:gosec // shims need to be accessible
 		return fmt.Errorf("failed to create shim directory: %w", err)
 	}
 
 	// Write shim file with executable permissions
-	if err := os.WriteFile(shimPath, []byte(content), 0755); err != nil {
+	if err := os.WriteFile(shimPath, []byte(content), 0755); err != nil { //nolint:gosec // shim must be executable
 		return fmt.Errorf("failed to write shim file: %w", err)
 	}
 
@@ -122,7 +139,7 @@ func WriteShim(shimPath string, command string, logPath string, shimDir string) 
 // GenerateAllShims creates shim scripts for all specified commands.
 func GenerateAllShims(shimDir string, commands []string, logPath string) error {
 	// Create shim directory if it doesn't exist
-	if err := os.MkdirAll(shimDir, 0755); err != nil {
+	if err := os.MkdirAll(shimDir, 0755); err != nil { //nolint:gosec // shims need to be accessible
 		return fmt.Errorf("failed to create shim directory: %w", err)
 	}
 
@@ -149,11 +166,11 @@ func LogRecording(logPath string, timestamp time.Time, argv []string, exitCode i
 	}
 
 	// Open log file in append mode
-	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) //nolint:gosec // log file needs to be readable
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // best-effort close
 
 	// Write JSONL entry
 	encoder := json.NewEncoder(file)
@@ -167,7 +184,7 @@ func LogRecording(logPath string, timestamp time.Time, argv []string, exitCode i
 // FindRealCommand locates the actual binary for a command, excluding shims.
 func FindRealCommand(command string, shimDir string) (string, error) {
 	// Use 'command -v' to find the command in PATH
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("command -v %s", command))
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("command -v %s", command)) //nolint:gosec,noctx // command name is user-provided and expected
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("command not found: %s", command)

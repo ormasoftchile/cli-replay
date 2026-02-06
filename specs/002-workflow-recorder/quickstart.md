@@ -14,6 +14,16 @@ The workflow recorder captures real CLI command executions and automatically gen
 - Target commands available in PATH (e.g., `kubectl`, `docker`, `aws`)
 - Write permissions for output directory
 
+## Build from Source
+
+```bash
+# Build the record-enabled binary
+go build -o bin/cli-replay .
+
+# Verify record subcommand is available
+./bin/cli-replay record --help
+```
+
 ## Quick Start: 30 Second Tutorial
 
 ### 1. Record a Single Command

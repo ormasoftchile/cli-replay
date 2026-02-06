@@ -121,6 +121,64 @@ steps:
 
 ## Commands
 
+### cli-replay record
+
+Record a command execution and generate a YAML scenario file:
+
+```bash
+cli-replay record --output demo.yaml -- kubectl get pods
+```
+
+#### Flags
+
+| Flag | Short | Type | Required | Description |
+|------|-------|------|----------|-------------|
+| `--output` | `-o` | string | Yes | Output YAML file path |
+| `--name` | `-n` | string | No | Scenario name (default: auto-generated) |
+| `--description` | `-d` | string | No | Scenario description |
+| `--command` | `-c` | []string | No | Commands to intercept (can be repeated) |
+
+#### Examples
+
+```bash
+# Record a single command
+cli-replay record --output simple.yaml -- echo "hello world"
+
+# Record with custom metadata
+cli-replay record \
+  --name "my-test" \
+  --description "Test scenario" \
+  --output test.yaml \
+  -- kubectl get pods
+
+# Record a multi-step workflow
+cli-replay record \
+  --output workflow.yaml \
+  --name "deploy-flow" \
+  -- bash -c "kubectl get pods && kubectl apply -f deploy.yaml && kubectl get pods"
+
+# Record only specific commands from a script
+cli-replay record \
+  --output kubectl-only.yaml \
+  --command kubectl \
+  --command docker \
+  -- bash deploy.sh
+```
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success — recording completed and YAML written |
+| 1 | Setup failure (invalid flags, output path not writable) |
+| 2 | User command failed (YAML is still generated) |
+| 3 | YAML generation or validation failed |
+
+#### How Recording Works
+
+1. **Direct capture mode** (no `--command` flags): The command runs directly; stdout, stderr, and exit code are captured
+2. **Shim mode** (`--command` flags specified): Bash shim scripts are generated in a temporary directory and prepended to PATH, intercepting specified commands and logging executions to a JSONL file
+
 ### cli-replay run
 
 Initialize or resume a replay session:

@@ -1,0 +1,3 @@
+{"timestamp":"2026-02-06T14:30:22Z","argv":["kubectl","get","pods"],"exit":0,"stdout":"NAME    READY   STATUS             RESTARTS   AGE\nweb-0   0/1     CrashLoopBackOff   5          10m\n","stderr":""}
+{"timestamp":"2026-02-06T14:30:25Z","argv":["kubectl","delete","pod","web-0"],"exit":0,"stdout":"pod \"web-0\" deleted\n","stderr":""}
+{"timestamp":"2026-02-06T14:30:28Z","argv":["kubectl","get","pods"],"exit":0,"stdout":"NAME    READY   STATUS    RESTARTS   AGE\nweb-0   1/1     Running   0          30s\n","stderr":""}

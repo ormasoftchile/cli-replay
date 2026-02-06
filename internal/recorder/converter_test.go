@@ -47,7 +47,7 @@ func TestConvertToScenario(t *testing.T) {
 	// Step 1
 	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[0].Match.Argv)
 	assert.Equal(t, "NAME    READY   STATUS\npod1    1/1     Running\n", scenario.Steps[0].Respond.Stdout)
-	assert.Equal(t, "", scenario.Steps[0].Respond.Stderr)
+	assert.Empty(t, scenario.Steps[0].Respond.Stderr)
 	assert.Equal(t, 0, scenario.Steps[0].Respond.Exit)
 
 	// Step 2
@@ -128,7 +128,7 @@ func TestConvertToScenario_NonZeroExitCode(t *testing.T) {
 	require.Len(t, scenario.Steps, 1)
 	assert.Equal(t, 1, scenario.Steps[0].Respond.Exit)
 	assert.Equal(t, "Error from server (NotFound): pods \"nonexistent\" not found\n", scenario.Steps[0].Respond.Stderr)
-	assert.Equal(t, "", scenario.Steps[0].Respond.Stdout)
+	assert.Empty(t, scenario.Steps[0].Respond.Stdout)
 }
 
 func TestConvertToScenario_EmptyCommands(t *testing.T) {
@@ -142,7 +142,7 @@ func TestConvertToScenario_EmptyCommands(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "empty-test", scenario.Meta.Name)
-	assert.Len(t, scenario.Steps, 0)
+	assert.Empty(t, scenario.Steps)
 }
 
 func TestGenerateYAML(t *testing.T) {
@@ -207,7 +207,7 @@ func TestWriteYAMLFile(t *testing.T) {
 	assert.FileExists(t, outputPath)
 
 	// Verify content
-	content, err := os.ReadFile(outputPath)
+	content, err := os.ReadFile(outputPath) //nolint:gosec // test file path
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "name: file-test")
 	assert.Contains(t, string(content), "echo")

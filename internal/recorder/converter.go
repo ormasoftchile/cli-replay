@@ -79,7 +79,7 @@ func WriteYAMLFile(outputPath string, sc *scenario.Scenario) error {
 	}
 
 	// Write to file
-	if err := os.WriteFile(outputPath, []byte(yamlContent), 0644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(yamlContent), 0600); err != nil {
 		return fmt.Errorf("failed to write YAML file: %w", err)
 	}
 

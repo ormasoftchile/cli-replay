@@ -5,9 +5,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestRecordedCommand_Validate(t *testing.T) {
+func TestRecordedCommand_Validate(t *testing.T) { //nolint:funlen // table-driven test
 	tests := []struct {
 		name    string
 		cmd     RecordedCommand
@@ -93,7 +94,7 @@ func TestRecordedCommand_Validate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.cmd.Validate()
 			if tt.wantErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 				if tt.errMsg != "" {
 					assert.Contains(t, err.Error(), tt.errMsg)
 				}

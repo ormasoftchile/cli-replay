@@ -1,3 +1,4 @@
+// Package cmd implements the cli-replay Cobra command tree.
 package cmd
 
 import (
@@ -24,7 +25,7 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-func init() {
+func init() { //nolint:gochecknoinits
 	// Global flags can be added here
 	// rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 }

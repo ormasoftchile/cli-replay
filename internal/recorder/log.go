@@ -26,11 +26,11 @@ type RecordingLog struct {
 
 // ReadRecordingLog parses a JSONL file and returns a RecordingLog.
 func ReadRecordingLog(filePath string) (*RecordingLog, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) //nolint:gosec // file path from caller
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // read-only file close
 
 	var entries []RecordingEntry
 	scanner := bufio.NewScanner(file)

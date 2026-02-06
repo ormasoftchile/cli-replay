@@ -1,7 +1,7 @@
 # cli-replay Makefile
 # Build targets for development and release
 
-.PHONY: build test lint fmt clean install help
+.PHONY: build test lint fmt clean install help record-demo
 
 # Binary name
 BINARY := cli-replay
@@ -21,6 +21,15 @@ all: lint test build
 build:
 	@mkdir -p $(BIN_DIR)
 	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY) ./cmd/cli-replay
+
+# Build the record-enabled binary (Cobra root with record subcommand)
+build-record:
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-record .
+
+# Run the recording demo
+record-demo: build-record
+	CLI_REPLAY_BIN=$(BIN_DIR)/$(BINARY)-record ./examples/recording-demo.sh
 
 # Build for all platforms (release)
 build-all: build-linux build-darwin build-windows
@@ -97,9 +106,10 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Build targets:"
-	@echo "  build        Build the binary (default)"
-	@echo "  build-all    Build for all platforms"
-	@echo "  install      Install to GOPATH/bin"
+	@echo "  build         Build the binary (default)"
+	@echo "  build-record  Build the record-enabled binary"
+	@echo "  build-all     Build for all platforms"
+	@echo "  install       Install to GOPATH/bin"
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test         Run tests with race detection"
@@ -110,6 +120,9 @@ help:
 	@echo "  lint         Run golangci-lint"
 	@echo "  fmt          Format code"
 	@echo "  fmt-check    Check code formatting"
+	@echo ""
+	@echo "Demo targets:"
+	@echo "  record-demo  Run the recording demo script"
 	@echo ""
 	@echo "Utility targets:"
 	@echo "  clean        Remove build artifacts"

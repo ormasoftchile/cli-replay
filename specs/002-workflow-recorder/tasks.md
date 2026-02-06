@@ -19,9 +19,9 @@
 
 **Purpose**: Project initialization and package structure
 
-- [ ] T001 Create `internal/recorder` package directory structure
-- [ ] T002 Create `cmd` package directory structure for Cobra commands
-- [ ] T003 [P] Create `testdata/recordings` directory for test fixtures
+- [X] T001 Create `internal/recorder` package directory structure
+- [X] T002 Create `cmd` package directory structure for Cobra commands
+- [X] T003 [P] Create `testdata/recordings` directory for test fixtures
 
 ---
 
@@ -31,10 +31,10 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Create RecordedCommand type in internal/recorder/command.go with fields (Timestamp, Argv, ExitCode, Stdout, Stderr)
-- [ ] T005 [P] Create RecordingEntry type in internal/recorder/log.go for JSONL parsing with JSON tags
-- [ ] T006 [P] Create SessionMetadata type in internal/recorder/session.go with Name, Description, RecordedAt fields
-- [ ] T007 Create RecordingSession type in internal/recorder/session.go with session lifecycle fields
+- [X] T004 Create RecordedCommand type in internal/recorder/command.go with fields (Timestamp, Argv, ExitCode, Stdout, Stderr)
+- [X] T005 [P] Create RecordingEntry type in internal/recorder/log.go for JSONL parsing with JSON tags
+- [X] T006 [P] Create SessionMetadata type in internal/recorder/session.go with Name, Description, RecordedAt fields
+- [X] T007 Create RecordingSession type in internal/recorder/session.go with session lifecycle fields
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -61,16 +61,16 @@
 - [X] T015 [P] [US1] Implement JSONL parsing logic in internal/recorder/log.go (ReadRecordingLog function)
 - [X] T016 [P] [US1] Implement shim script generation in internal/recorder/shim.go (GenerateShim function with bash template)
 - [X] T017 [US1] Implement RecordingSession New() constructor in internal/recorder/session.go (create temp dir, init log file)
-- [ ] T018 [US1] Implement RecordingSession SetupShims() method in internal/recorder/session.go (generate shims, set PATH)
-- [ ] T019 [US1] Implement RecordingSession Execute() method in internal/recorder/session.go (run command with modified PATH)
+- [X] T018 [US1] Implement RecordingSession SetupShims() method in internal/recorder/session.go (generate shims, set PATH)
+- [X] T019 [US1] Implement RecordingSession Execute() method in internal/recorder/session.go (run command with modified PATH)
 - [X] T020 [US1] Implement RecordingSession Finalize() method in internal/recorder/session.go (cleanup temp dir)
 - [X] T021 [US1] Implement ConvertToScenario function in internal/recorder/converter.go (JSONL → Scenario with validation)
 - [X] T022 [US1] Implement GenerateYAML function in internal/recorder/converter.go (Scenario → YAML file)
-- [ ] T023 [US1] Create Cobra root command in cmd/root.go (basic cobra setup)
-- [ ] T024 [US1] Create Cobra record subcommand in cmd/record.go (flags: --output required, --name, --description optional)
-- [ ] T025 [US1] Implement record command handler in cmd/record.go (parse flags, create session, execute, convert, write YAML)
-- [ ] T026 [US1] Add error handling and user-friendly messages in cmd/record.go (output path validation, command not found, etc.)
-- [ ] T027 [US1] Add godoc comments for all exported types and functions in internal/recorder package
+- [X] T023 [US1] Create Cobra root command in cmd/root.go (basic cobra setup)
+- [X] T024 [US1] Create Cobra record subcommand in cmd/record.go (flags: --output required, --name, --description optional)
+- [X] T025 [US1] Implement record command handler in cmd/record.go (parse flags, create session, execute, convert, write YAML)
+- [X] T026 [US1] Add error handling and user-friendly messages in cmd/record.go (output path validation, command not found, etc.)
+- [X] T027 [US1] Add godoc comments for all exported types and functions in internal/recorder package
 
 **Checkpoint**: User Story 1 complete - basic single command recording works end-to-end
 
@@ -84,16 +84,16 @@
 
 ### Tests for User Story 2 (Write FIRST, ensure they FAIL)
 
-- [ ] T028 [P] [US2] Unit test for multi-command JSONL parsing in internal/recorder/log_test.go (multiple entries, order preservation)
-- [ ] T029 [P] [US2] Unit test for duplicate command recording in internal/recorder/converter_test.go (same argv, different outputs → separate steps)
-- [ ] T030 [US2] Integration test for multi-step workflow in cmd/record_test.go (bash script with 3 commands, verify all captured)
+- [X] T028 [P] [US2] Unit test for multi-command JSONL parsing in internal/recorder/log_test.go (multiple entries, order preservation)
+- [X] T029 [P] [US2] Unit test for duplicate command recording in internal/recorder/converter_test.go (same argv, different outputs → separate steps)
+- [X] T030 [US2] Integration test for multi-step workflow in cmd/record_test.go (bash script with 3 commands, verify all captured)
 
 ### Implementation for User Story 2
 
-- [ ] T031 [US2] Enhance JSONL parsing to handle multiple entries in internal/recorder/log.go (ensure order preservation)
-- [ ] T032 [US2] Enhance converter to handle duplicate commands in internal/recorder/converter.go (create separate steps per FR-009b)
-- [ ] T033 [US2] Add integration test for shell script execution in cmd/record_test.go (test with bash -c 'cmd1 && cmd2 && cmd3')
-- [ ] T034 [US2] Update quickstart.md with multi-step workflow examples
+- [X] T031 [US2] Enhance JSONL parsing to handle multiple entries in internal/recorder/log.go (ensure order preservation)
+- [X] T032 [US2] Enhance converter to handle duplicate commands in internal/recorder/converter.go (create separate steps per FR-009b)
+- [X] T033 [US2] Add integration test for shell script execution in cmd/record_test.go (test with bash -c 'cmd1 && cmd2 && cmd3')
+- [X] T034 [US2] Update quickstart.md with multi-step workflow examples
 
 **Checkpoint**: User Story 2 complete - multi-step workflows recording works, US1 still functional
 
@@ -103,16 +103,16 @@
 
 **Purpose**: Quality improvements, documentation, and final validation
 
-- [ ] T035 [P] Add main.go entry point in project root (if not exists, calls cmd/root.go Execute())
-- [ ] T036 [P] Update README.md with record subcommand documentation and examples
-- [ ] T037 [P] Add usage examples in examples/recording-demo.sh
-- [ ] T038 Run golangci-lint and fix any warnings
-- [ ] T039 Run gofmt -s and goimports on all Go files
-- [ ] T040 Verify all tests pass with `go test ./...`
-- [ ] T041 Validate generated YAML scenarios with existing `cli-replay run` command
-- [ ] T042 Run quickstart.md validation (execute examples, verify outputs)
-- [ ] T043 Update Makefile with `make record-demo` target (if Makefile exists)
-- [ ] T044 Create release notes documenting new record subcommand
+- [X] T035 [P] Add main.go entry point in project root (if not exists, calls cmd/root.go Execute())
+- [X] T036 [P] Update README.md with record subcommand documentation and examples
+- [X] T037 [P] Add usage examples in examples/recording-demo.sh
+- [X] T038 Run golangci-lint and fix any warnings
+- [X] T039 Run gofmt -s and goimports on all Go files
+- [X] T040 Verify all tests pass with `go test ./...`
+- [X] T041 Validate generated YAML scenarios with existing `cli-replay run` command
+- [X] T042 Run quickstart.md validation (execute examples, verify outputs)
+- [X] T043 Update Makefile with `make record-demo` target (if Makefile exists)
+- [X] T044 Create release notes documenting new record subcommand
 
 ---
 
