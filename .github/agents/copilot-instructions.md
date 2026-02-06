@@ -3,6 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2026-02-05
 
 ## Active Technologies
+- Go 1.21+ + `cobra` (CLI framework), `gopkg.in/yaml.v3` (YAML generation) (002-workflow-recorder)
+- Temporary directory for shim executables, JSONL log file for session data, output YAML file (002-workflow-recorder)
 
 - Go 1.21+ + cobra (CLI), gopkg.in/yaml.v3 (YAML parsing), testify/assert (testing) (001-core-scenario-replay)
 
@@ -22,6 +24,7 @@ tests/
 Go 1.21+: Follow standard conventions
 
 ## Recent Changes
+- 002-workflow-recorder: Added Go 1.21+ + `cobra` (CLI framework), `gopkg.in/yaml.v3` (YAML generation)
 
 - 001-core-scenario-replay: Added Go 1.21+ + cobra (CLI), gopkg.in/yaml.v3 (YAML parsing), testify/assert (testing)
 
