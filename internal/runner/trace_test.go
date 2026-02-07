@@ -60,3 +60,23 @@ func TestIsTraceEnabled(t *testing.T) {
 		})
 	}
 }
+
+// T009: WriteDeniedEnvTrace tests
+
+func TestWriteDeniedEnvTrace_Format(t *testing.T) {
+	var buf bytes.Buffer
+	WriteDeniedEnvTrace(&buf, "AWS_SECRET_ACCESS_KEY")
+
+	output := buf.String()
+	assert.Equal(t, "cli-replay[trace]: denied env var AWS_SECRET_ACCESS_KEY\n", output)
+}
+
+func TestWriteDeniedEnvTrace_MultipleVars(t *testing.T) {
+	var buf bytes.Buffer
+	WriteDeniedEnvTrace(&buf, "AWS_KEY")
+	WriteDeniedEnvTrace(&buf, "GITHUB_TOKEN")
+
+	output := buf.String()
+	assert.Contains(t, output, "denied env var AWS_KEY")
+	assert.Contains(t, output, "denied env var GITHUB_TOKEN")
+}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"text/template"
+
+	"github.com/cli-replay/cli-replay/internal/envfilter"
 )
 
 // Render renders a Go text/template with the given variables.
@@ -59,4 +61,34 @@ func MergeVars(vars map[string]string) map[string]string {
 	}
 
 	return result
+}
+
+// MergeVarsFiltered merges scenario vars with environment variables, but
+// suppresses env var overrides for names that match any of the deny patterns.
+// When an env var is denied, the original meta.vars value is preserved
+// (or empty string if no base value exists).
+// Returns the merged map and a slice of denied variable names for trace output.
+// If denyPatterns is nil/empty, behaves identically to MergeVars.
+func MergeVarsFiltered(vars map[string]string, denyPatterns []string) (map[string]string, []string) {
+	result := make(map[string]string)
+	var denied []string
+
+	// Copy base vars
+	for k, v := range vars {
+		result[k] = v
+	}
+
+	// Override with environment variables, respecting deny patterns
+	for k := range result {
+		if envVal := os.Getenv(k); envVal != "" {
+			if len(denyPatterns) > 0 && envfilter.IsDenied(k, denyPatterns) {
+				// Denied: keep the meta.vars value (or empty if none)
+				denied = append(denied, k)
+			} else {
+				result[k] = envVal
+			}
+		}
+	}
+
+	return result, denied
 }

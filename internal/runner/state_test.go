@@ -1,7 +1,9 @@
 package runner
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -740,4 +742,219 @@ func TestState_GroupAllMinsMet(t *testing.T) {
 	// Over min
 	state.StepCounts = []int{5, 2}
 	assert.True(t, state.GroupAllMinsMet(gr, steps))
+}
+
+// T012/T013: CleanExpiredSessions tests
+
+func TestCleanExpiredSessions_RemovesExpired(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	// Create an expired state file (last_updated = 1 hour ago)
+	expiredState := &State{
+		ScenarioPath: "/path/to/scenario.yaml",
+		ScenarioHash: "abc123",
+		CurrentStep:  0,
+		TotalSteps:   1,
+		LastUpdated:  time.Now().UTC().Add(-1 * time.Hour),
+	}
+	stateFile := filepath.Join(cliReplayDir, "cli-replay-abc123deadbeef.state")
+	require.NoError(t, WriteState(stateFile, expiredState))
+
+	// Clean with 30m TTL — 1h old session should be expired
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleaned)
+	assert.NoFileExists(t, stateFile)
+}
+
+func TestCleanExpiredSessions_PreservesActive(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	// Create an active state file (last_updated = now)
+	activeState := &State{
+		ScenarioPath: "/path/to/scenario.yaml",
+		ScenarioHash: "abc123",
+		CurrentStep:  0,
+		TotalSteps:   1,
+		LastUpdated:  time.Now().UTC(),
+	}
+	stateFile := filepath.Join(cliReplayDir, "cli-replay-abc123deadbeef.state")
+	require.NoError(t, WriteState(stateFile, activeState))
+
+	// Clean with 30m TTL — recent session should NOT be expired
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cleaned)
+	assert.FileExists(t, stateFile)
+}
+
+func TestCleanExpiredSessions_RemovesInterceptDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	// Create an intercept dir
+	interceptDir := filepath.Join(cliReplayDir, "intercept-test")
+	require.NoError(t, os.MkdirAll(interceptDir, 0750))
+	// Write a file inside to ensure full cleanup
+	require.NoError(t, os.WriteFile(filepath.Join(interceptDir, "kubectl.exe"), []byte("fake"), 0600))
+
+	// Create an expired state file referencing the intercept dir
+	expiredState := &State{
+		ScenarioPath: "/path/to/scenario.yaml",
+		ScenarioHash: "abc123",
+		CurrentStep:  0,
+		TotalSteps:   1,
+		InterceptDir: interceptDir,
+		LastUpdated:  time.Now().UTC().Add(-2 * time.Hour),
+	}
+	stateFile := filepath.Join(cliReplayDir, "cli-replay-abc123deadbeef.state")
+	require.NoError(t, WriteState(stateFile, expiredState))
+
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleaned)
+	assert.NoFileExists(t, stateFile)
+	assert.NoDirExists(t, interceptDir)
+}
+
+func TestCleanExpiredSessions_MixedActiveAndExpired(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	// Expired state
+	expiredState := &State{
+		ScenarioPath: "/path/to/old.yaml",
+		ScenarioHash: "old-hash",
+		LastUpdated:  time.Now().UTC().Add(-2 * time.Hour),
+	}
+	expiredFile := filepath.Join(cliReplayDir, "cli-replay-1111111111111111.state")
+	require.NoError(t, WriteState(expiredFile, expiredState))
+
+	// Active state
+	activeState := &State{
+		ScenarioPath: "/path/to/new.yaml",
+		ScenarioHash: "new-hash",
+		LastUpdated:  time.Now().UTC(),
+	}
+	activeFile := filepath.Join(cliReplayDir, "cli-replay-2222222222222222.state")
+	require.NoError(t, WriteState(activeFile, activeState))
+
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleaned)
+	assert.NoFileExists(t, expiredFile)
+	assert.FileExists(t, activeFile)
+}
+
+func TestCleanExpiredSessions_EmptyDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cleaned)
+}
+
+func TestCleanExpiredSessions_NonExistentDirectory(t *testing.T) {
+	cleaned, err := CleanExpiredSessions("/nonexistent/.cli-replay", 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cleaned)
+}
+
+func TestCleanExpiredSessions_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	expiredState := &State{
+		ScenarioPath: "/path/to/scenario.yaml",
+		ScenarioHash: "abc123",
+		LastUpdated:  time.Now().UTC().Add(-2 * time.Hour),
+	}
+	stateFile := filepath.Join(cliReplayDir, "cli-replay-abc123deadbeef.state")
+	require.NoError(t, WriteState(stateFile, expiredState))
+
+	// First clean
+	cleaned1, err := CleanExpiredSessions(cliReplayDir, 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleaned1)
+
+	// Second clean — nothing to clean
+	cleaned2, err := CleanExpiredSessions(cliReplayDir, 30*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cleaned2)
+}
+
+func TestCleanExpiredSessions_FutureTimestampTreatedAsActive(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	// State with future last_updated
+	futureState := &State{
+		ScenarioPath: "/path/to/scenario.yaml",
+		ScenarioHash: "abc123",
+		LastUpdated:  time.Now().UTC().Add(1 * time.Hour),
+	}
+	stateFile := filepath.Join(cliReplayDir, "cli-replay-abc123deadbeef.state")
+	require.NoError(t, WriteState(stateFile, futureState))
+
+	var warnBuf bytes.Buffer
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 5*time.Minute, &warnBuf)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cleaned)
+	assert.FileExists(t, stateFile)
+	assert.Contains(t, warnBuf.String(), "future last_updated")
+}
+
+func TestCleanExpiredSessions_SkipsNonStateFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	// Create non-state file
+	otherFile := filepath.Join(cliReplayDir, "other-file.json")
+	require.NoError(t, os.WriteFile(otherFile, []byte("{}"), 0600))
+
+	// Create a subdirectory (intercept dir) — should be skipped
+	require.NoError(t, os.MkdirAll(filepath.Join(cliReplayDir, "intercept-test"), 0750))
+
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 5*time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cleaned)
+	assert.FileExists(t, otherFile)
+}
+
+// T032: Benchmark test — 50 state files, CleanExpiredSessions should complete in < 2s.
+func TestCleanExpiredSessions_Benchmark50Files(t *testing.T) {
+	tmpDir := t.TempDir()
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	require.NoError(t, os.MkdirAll(cliReplayDir, 0750))
+
+	// Create 50 expired state files
+	for i := 0; i < 50; i++ {
+		state := &State{
+			ScenarioPath: fmt.Sprintf("scenario-%d.yaml", i),
+			ScenarioHash: fmt.Sprintf("hash%d", i),
+			TotalSteps:   3,
+			LastUpdated:  time.Now().Add(-2 * time.Hour),
+		}
+		stateFile := filepath.Join(cliReplayDir, fmt.Sprintf("cli-replay-%032d.state", i))
+		require.NoError(t, WriteState(stateFile, state))
+	}
+
+	start := time.Now()
+	cleaned, err := CleanExpiredSessions(cliReplayDir, 1*time.Hour, nil)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.Equal(t, 50, cleaned)
+	assert.Less(t, elapsed, 2*time.Second, "CleanExpiredSessions with 50 files should complete in < 2s")
 }

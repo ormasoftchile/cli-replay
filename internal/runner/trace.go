@@ -14,6 +14,13 @@ func WriteTraceOutput(w io.Writer, stepIndex int, argv []string, exitCode int) {
 	_, _ = fmt.Fprintf(w, "[cli-replay] step=%d argv=%v exit=%d\n", stepIndex, argv, exitCode)
 }
 
+// WriteDeniedEnvTrace writes a trace line for a denied environment variable
+// substitution. Called when CLI_REPLAY_TRACE is enabled and an env var
+// override is suppressed by a deny pattern.
+func WriteDeniedEnvTrace(w io.Writer, varName string) {
+	_, _ = fmt.Fprintf(w, "cli-replay[trace]: denied env var %s\n", varName)
+}
+
 // IsTraceEnabled returns true if trace mode should be enabled.
 func IsTraceEnabled(envValue string) bool {
 	switch strings.ToLower(envValue) {

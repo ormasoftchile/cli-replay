@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cli-replay/cli-replay/internal/matcher"
 	"github.com/cli-replay/cli-replay/internal/scenario"
@@ -68,9 +69,30 @@ func ReplayResponseWithFile(step *scenario.Step, scenarioPath string, stdout, st
 
 // ReplayResponseWithTemplate writes the step's response with template rendering.
 // Templates in stdout/stderr are rendered with vars from scenario meta + environment.
+// If deny_env_vars is configured, denied env vars are suppressed and traced.
 func ReplayResponseWithTemplate(step *scenario.Step, scn *scenario.Scenario, scenarioPath string, stdout, stderr io.Writer) int {
 	scenarioDir := filepath.Dir(scenarioPath)
-	vars := template.MergeVars(scn.Meta.Vars)
+
+	// Determine deny patterns from security config (T014, T015)
+	var denyPatterns []string
+	if scn.Meta.Security != nil && len(scn.Meta.Security.DenyEnvVars) > 0 {
+		denyPatterns = scn.Meta.Security.DenyEnvVars
+	}
+
+	// Use filtered merge when deny patterns exist, else default behavior
+	var vars map[string]string
+	if len(denyPatterns) > 0 {
+		var denied []string
+		vars, denied = template.MergeVarsFiltered(scn.Meta.Vars, denyPatterns)
+		// T010: Trace denied env vars
+		if IsTraceEnabled(os.Getenv(TraceEnvVar)) {
+			for _, name := range denied {
+				WriteDeniedEnvTrace(stderr, name)
+			}
+		}
+	} else {
+		vars = template.MergeVars(scn.Meta.Vars)
+	}
 
 	// Handle stdout
 	stdoutContent := ""
@@ -143,6 +165,16 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 	scn, err := scenario.LoadFile(absPath)
 	if err != nil {
 		return &ReplayResult{ExitCode: 1}, fmt.Errorf("failed to load scenario: %w", err)
+	}
+
+	// T020: TTL cleanup before matching (intercept shim path)
+	if scn.Meta.Session != nil && scn.Meta.Session.TTL != "" {
+		if ttl, parseErr := time.ParseDuration(scn.Meta.Session.TTL); parseErr == nil && ttl > 0 {
+			cliReplayDir := filepath.Join(filepath.Dir(absPath), ".cli-replay")
+			if cleaned, _ := CleanExpiredSessions(cliReplayDir, ttl, stderr); cleaned > 0 {
+				_, _ = fmt.Fprintf(stderr, "cli-replay: cleaned %d expired sessions\n", cleaned)
+			}
+		}
 	}
 
 	// Flatten steps (expands groups inline) for sequential replay logic

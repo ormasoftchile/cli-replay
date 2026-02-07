@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
 	"github.com/cli-replay/cli-replay/internal/scenario"
@@ -69,6 +70,18 @@ func runRun(_ *cobra.Command, args []string) error {
 	// Validate allowlist before creating intercepts (T036)
 	if err := checkAllowlist(scn); err != nil {
 		return err
+	}
+
+	// T018: TTL cleanup at session startup
+	if scn.Meta.Session != nil && scn.Meta.Session.TTL != "" {
+		ttl, parseErr := time.ParseDuration(scn.Meta.Session.TTL)
+		if parseErr == nil && ttl > 0 {
+			cliReplayDir := filepath.Join(filepath.Dir(absPath), ".cli-replay")
+			cleaned, _ := runner.CleanExpiredSessions(cliReplayDir, ttl, os.Stderr)
+			if cleaned > 0 {
+				fmt.Fprintf(os.Stderr, "cli-replay: cleaned %d expired sessions\n", cleaned)
+			}
+		}
 	}
 
 	// Calculate scenario hash for state tracking

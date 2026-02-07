@@ -9,6 +9,25 @@ import (
 	"time"
 )
 
+// Session defines session lifecycle configuration.
+type Session struct {
+	TTL string `yaml:"ttl,omitempty"`
+}
+
+// Validate checks that the session configuration is valid.
+func (s *Session) Validate() error {
+	if s.TTL != "" {
+		d, err := time.ParseDuration(s.TTL)
+		if err != nil {
+			return fmt.Errorf("invalid ttl %q: %w", s.TTL, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("ttl must be positive, got %s", s.TTL)
+		}
+	}
+	return nil
+}
+
 // Scenario represents a complete test definition loaded from a YAML file.
 type Scenario struct {
 	Meta  Meta          `yaml:"meta"`
@@ -147,17 +166,39 @@ type Meta struct {
 	Description string            `yaml:"description,omitempty"`
 	Vars        map[string]string `yaml:"vars,omitempty"`
 	Security    *Security         `yaml:"security,omitempty"`
+	Session     *Session          `yaml:"session,omitempty"`
 }
 
 // Security defines constraints on which commands may be intercepted.
 type Security struct {
 	AllowedCommands []string `yaml:"allowed_commands,omitempty"`
+	DenyEnvVars     []string `yaml:"deny_env_vars,omitempty"`
 }
 
 // Validate checks that the meta section is valid.
 func (m *Meta) Validate() error {
 	if strings.TrimSpace(m.Name) == "" {
 		return errors.New("name must be non-empty")
+	}
+	if m.Security != nil {
+		if err := m.Security.Validate(); err != nil {
+			return fmt.Errorf("security: %w", err)
+		}
+	}
+	if m.Session != nil {
+		if err := m.Session.Validate(); err != nil {
+			return fmt.Errorf("session: %w", err)
+		}
+	}
+	return nil
+}
+
+// Validate checks that the security configuration is valid.
+func (s *Security) Validate() error {
+	for i, pattern := range s.DenyEnvVars {
+		if pattern == "" {
+			return fmt.Errorf("deny_env_vars[%d]: must be non-empty", i)
+		}
 	}
 	return nil
 }

@@ -501,6 +501,218 @@ steps:
 	assert.Equal(t, []string{"kubectl", "az"}, scn.Meta.Security.AllowedCommands)
 }
 
+// T004: DenyEnvVars field tests
+
+func TestSecurity_DenyEnvVars(t *testing.T) {
+	t.Run("security struct with deny_env_vars", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{"AWS_*", "GITHUB_TOKEN"}}
+		assert.Equal(t, []string{"AWS_*", "GITHUB_TOKEN"}, sec.DenyEnvVars)
+		assert.NoError(t, sec.Validate())
+	})
+
+	t.Run("empty deny_env_vars slice", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{}}
+		assert.NoError(t, sec.Validate())
+	})
+
+	t.Run("nil deny_env_vars", func(t *testing.T) {
+		sec := Security{}
+		assert.Nil(t, sec.DenyEnvVars)
+		assert.NoError(t, sec.Validate())
+	})
+}
+
+func TestSecurity_DenyEnvVars_Validation(t *testing.T) {
+	t.Run("empty string in deny_env_vars rejected", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{"AWS_*", ""}}
+		err := sec.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "deny_env_vars[1]: must be non-empty")
+	})
+
+	t.Run("valid patterns pass validation", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{"*", "AWS_*", "GITHUB_TOKEN", "*_SECRET"}}
+		assert.NoError(t, sec.Validate())
+	})
+}
+
+func TestDenyEnvVarsYAMLParsing(t *testing.T) {
+	yamlContent := `
+meta:
+  name: deny-test
+  security:
+    allowed_commands:
+      - kubectl
+    deny_env_vars:
+      - "AWS_*"
+      - "GITHUB_TOKEN"
+      - "*_SECRET"
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.NotNil(t, scn.Meta.Security)
+	assert.Equal(t, []string{"AWS_*", "GITHUB_TOKEN", "*_SECRET"}, scn.Meta.Security.DenyEnvVars)
+	assert.Equal(t, []string{"kubectl"}, scn.Meta.Security.AllowedCommands)
+}
+
+func TestMeta_DenyEnvVarsValidation(t *testing.T) {
+	t.Run("meta with empty deny_env_vars entry fails validation", func(t *testing.T) {
+		meta := Meta{
+			Name:     "test",
+			Security: &Security{DenyEnvVars: []string{""}},
+		}
+		err := meta.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "security: deny_env_vars[0]: must be non-empty")
+	})
+}
+
+// T005: Session struct tests
+
+func TestSession_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		session     Session
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid TTL",
+			session: Session{TTL: "5m"},
+			wantErr: false,
+		},
+		{
+			name:    "valid TTL hours",
+			session: Session{TTL: "1h"},
+			wantErr: false,
+		},
+		{
+			name:    "valid TTL seconds",
+			session: Session{TTL: "30s"},
+			wantErr: false,
+		},
+		{
+			name:    "empty TTL is valid",
+			session: Session{TTL: ""},
+			wantErr: false,
+		},
+		{
+			name:        "invalid TTL format",
+			session:     Session{TTL: "never"},
+			wantErr:     true,
+			errContains: "invalid ttl",
+		},
+		{
+			name:        "negative TTL",
+			session:     Session{TTL: "-5m"},
+			wantErr:     true,
+			errContains: "ttl must be positive",
+		},
+		{
+			name:        "zero TTL",
+			session:     Session{TTL: "0s"},
+			wantErr:     true,
+			errContains: "ttl must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.session.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestMeta_WithSession(t *testing.T) {
+	t.Run("meta with session TTL", func(t *testing.T) {
+		meta := Meta{
+			Name:    "test",
+			Session: &Session{TTL: "10m"},
+		}
+		require.NoError(t, meta.Validate())
+		assert.Equal(t, "10m", meta.Session.TTL)
+	})
+
+	t.Run("meta with invalid session TTL", func(t *testing.T) {
+		meta := Meta{
+			Name:    "test",
+			Session: &Session{TTL: "invalid"},
+		}
+		err := meta.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "session: invalid ttl")
+	})
+
+	t.Run("meta without session", func(t *testing.T) {
+		meta := Meta{Name: "test"}
+		require.NoError(t, meta.Validate())
+		assert.Nil(t, meta.Session)
+	})
+}
+
+func TestSessionYAMLParsing(t *testing.T) {
+	yamlContent := `
+meta:
+  name: session-test
+  session:
+    ttl: "5m"
+steps:
+  - match:
+      argv: ["terraform", "plan"]
+    respond:
+      exit: 0
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.NotNil(t, scn.Meta.Session)
+	assert.Equal(t, "5m", scn.Meta.Session.TTL)
+}
+
+func TestBothDenyEnvVarsAndSessionYAML(t *testing.T) {
+	yamlContent := `
+meta:
+  name: combined-test
+  security:
+    allowed_commands: [az]
+    deny_env_vars: ["*"]
+  session:
+    ttl: "10m"
+  vars:
+    region: "eastus2"
+steps:
+  - match:
+      argv: ["az", "account", "show"]
+    respond:
+      exit: 0
+      stdout: "region={{ .region }}\n"
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.NoError(t, scn.Validate())
+
+	require.NotNil(t, scn.Meta.Security)
+	assert.Equal(t, []string{"*"}, scn.Meta.Security.DenyEnvVars)
+	assert.Equal(t, []string{"az"}, scn.Meta.Security.AllowedCommands)
+
+	require.NotNil(t, scn.Meta.Session)
+	assert.Equal(t, "10m", scn.Meta.Session.TTL)
+	assert.Equal(t, "eastus2", scn.Meta.Vars["region"])
+}
+
 func TestResponse_Validate(t *testing.T) {
 	tests := []struct {
 		name        string

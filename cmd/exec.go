@@ -135,6 +135,18 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// T019: TTL cleanup at session startup
+	if scn.Meta.Session != nil && scn.Meta.Session.TTL != "" {
+		ttl, parseErr := time.ParseDuration(scn.Meta.Session.TTL)
+		if parseErr == nil && ttl > 0 {
+			cliReplayDir := filepath.Join(filepath.Dir(absPath), ".cli-replay")
+			cleaned, _ := runner.CleanExpiredSessions(cliReplayDir, ttl, os.Stderr)
+			if cleaned > 0 {
+				fmt.Fprintf(os.Stderr, "cli-replay: cleaned %d expired sessions\n", cleaned)
+			}
+		}
+	}
+
 	// --- Phase 2: Setup ---
 
 	scenarioHash := hashScenarioFile(absPath)

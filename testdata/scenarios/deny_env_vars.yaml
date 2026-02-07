@@ -1,0 +1,21 @@
+meta:
+  name: deny-env-vars-demo
+  description: >
+    Demonstrates deny_env_vars — sensitive environment variables (matching
+    glob patterns) are blocked from template rendering.
+  vars:
+    cluster: demo-cluster
+    safe_value: allowed
+  security:
+    deny_env_vars:
+      - "AWS_*"
+      - "SECRET_*"
+      - "TOKEN"
+steps:
+  - match:
+      argv: [kubectl, get, pods]
+    respond:
+      exit: 0
+      stdout: |
+        NAME          READY   STATUS    RESTARTS   AGE
+        web-{{ .cluster }}   1/1     Running   0          5m
