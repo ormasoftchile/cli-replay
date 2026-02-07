@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cli-replay/cli-replay/internal/platform"
 	"github.com/cli-replay/cli-replay/internal/recorder"
 	"github.com/spf13/cobra"
 )
@@ -77,8 +78,8 @@ func runRecord(_ *cobra.Command, args []string) error {
 		RecordedAt:  time.Now().UTC(),
 	}
 
-	// Create recording session
-	session, err := recorder.New(meta, recordCommands)
+	// Create recording session with platform abstraction
+	session, err := recorder.New(meta, recordCommands, platform.New())
 	if err != nil {
 		return fmt.Errorf("failed to create recording session: %w", err)
 	}

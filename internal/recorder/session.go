@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cli-replay/cli-replay/internal/platform"
 )
 
 // SessionMetadata contains user-provided metadata for the generated scenario.
@@ -39,10 +41,13 @@ type RecordingSession struct {
 	ShimDir   string
 	LogFile   string
 	Metadata  SessionMetadata
+	platform  platform.Platform
 }
 
-// New creates a new RecordingSession with the given metadata and filters.
-func New(metadata SessionMetadata, filters []string) (*RecordingSession, error) {
+// New creates a new RecordingSession with the given metadata, filters, and platform.
+// The platform parameter encapsulates all OS-specific behavior (shim generation,
+// shell execution, command resolution).
+func New(metadata SessionMetadata, filters []string, plat platform.Platform) (*RecordingSession, error) {
 	// Set defaults for metadata
 	if metadata.Name == "" {
 		metadata.Name = fmt.Sprintf("recorded-session-%s", time.Now().UTC().Format("20060102-150405"))
@@ -77,6 +82,7 @@ func New(metadata SessionMetadata, filters []string) (*RecordingSession, error) 
 		ShimDir:   shimDir,
 		LogFile:   logFile,
 		Metadata:  metadata,
+		platform:  plat,
 	}
 
 	return session, nil
@@ -117,14 +123,39 @@ func (s *RecordingSession) Cleanup() error {
 
 // SetupShims generates shim scripts for the session's filtered commands.
 // If no filters are specified, shims are not generated (direct capture is used instead).
-// The generated shims are placed in the session's ShimDir.
+// The generated shims are placed in the session's ShimDir, delegating to the
+// platform for shim content and file naming.
 func (s *RecordingSession) SetupShims() error {
 	if len(s.Filters) == 0 {
 		// No filters → direct capture mode (no shims needed)
 		return nil
 	}
 
-	return GenerateAllShims(s.ShimDir, s.Filters, s.LogFile)
+	// Create shim directory if it doesn't exist
+	if err := os.MkdirAll(s.ShimDir, 0755); err != nil { //nolint:gosec // shims need to be accessible
+		return fmt.Errorf("failed to create shim directory: %w", err)
+	}
+
+	for _, cmd := range s.Filters {
+		shimFile, err := s.platform.GenerateShim(cmd, s.LogFile, s.ShimDir)
+		if err != nil {
+			return fmt.Errorf("failed to generate shim for %s: %w", cmd, err)
+		}
+
+		// Write entry-point
+		if err := os.WriteFile(shimFile.EntryPointPath, []byte(shimFile.Content), shimFile.FileMode); err != nil {
+			return fmt.Errorf("failed to write shim for %s: %w", cmd, err)
+		}
+
+		// Write companion file if present (Windows dual-file shim pattern)
+		if shimFile.CompanionPath != "" && shimFile.CompanionContent != "" {
+			if err := os.WriteFile(shimFile.CompanionPath, []byte(shimFile.CompanionContent), shimFile.FileMode); err != nil {
+				return fmt.Errorf("failed to write companion shim for %s: %w", cmd, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // Execute runs a command while recording its execution.
@@ -148,10 +179,8 @@ func (s *RecordingSession) Execute(args []string, stdout, stderr io.Writer) (int
 
 // executeWithShims runs the command in a subprocess with the shim directory
 // prepended to PATH so that intercepted commands are logged to JSONL.
+// Delegates to platform.WrapCommand for shell invocation.
 func (s *RecordingSession) executeWithShims(args []string, stdout, stderr io.Writer) (int, error) {
-	cmdStr := strings.Join(args, " ")
-	command := exec.Command("bash", "-c", cmdStr) //nolint:gosec,noctx // user command is intentionally executed
-
 	// Modify PATH to include shim directory first
 	originalPath := os.Getenv("PATH")
 	modifiedPath := s.ShimDir + string(os.PathListSeparator) + originalPath
@@ -169,8 +198,9 @@ func (s *RecordingSession) executeWithShims(args []string, stdout, stderr io.Wri
 		"CLI_REPLAY_RECORDING_LOG="+s.LogFile,
 		"CLI_REPLAY_SHIM_DIR="+s.ShimDir,
 	)
-	command.Env = newEnv
 
+	// Delegate shell wrapping to the platform
+	command := s.platform.WrapCommand(args, newEnv)
 	command.Stdout = stdout
 	command.Stderr = stderr
 	command.Stdin = os.Stdin

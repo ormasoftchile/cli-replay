@@ -5,17 +5,35 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is set at build time via -ldflags.
+var Version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "cli-replay",
-	Short: "Record and replay CLI command scenarios for testing",
-	Long: `cli-replay is a tool for recording real CLI command executions and 
-generating YAML scenario files that can be replayed for deterministic testing.
+	Short: "Scenario-driven CLI replay for testing",
+	Long: `cli-replay - Scenario-driven CLI replay for testing
 
-Features:
-- Record command executions with their exact outputs
-- Generate portable YAML scenario files
-- Replay scenarios with matching command detection
-- Perfect for testing CLI tools and scripts`,
+Record real CLI command executions and generate YAML scenario files,
+then replay them for deterministic, reproducible testing.
+
+Modes:
+  Management mode: cli-replay <command> [flags]
+  Intercept mode:  Symlink/copy cli-replay as another command (e.g. kubectl)
+                   and set CLI_REPLAY_SCENARIO to replay canned responses.
+
+Examples:
+  # Record a command
+  cli-replay record --output demo.yaml -- kubectl get pods
+
+  # Initialize a replay session
+  cli-replay run scenario.yaml
+
+  # Verify all steps were consumed
+  cli-replay verify scenario.yaml
+
+  # Clean up intercept session
+  cli-replay clean scenario.yaml`,
+	Version:       Version,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -26,6 +44,5 @@ func Execute() error {
 }
 
 func init() { //nolint:gochecknoinits
-	// Global flags can be added here
-	// rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.SetVersionTemplate("cli-replay version {{.Version}}\n")
 }

@@ -193,6 +193,11 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 	// Execute response with template rendering
 	exitCode := ReplayResponseWithTemplate(expectedStep, scn, absPath, stdout, stderr)
 
+	// Trace output if enabled
+	if IsTraceEnabled(os.Getenv(TraceEnvVar)) {
+		WriteTraceOutput(stderr, stepIndex, argv, exitCode)
+	}
+
 	// Advance state
 	state.Advance()
 	if err := WriteState(stateFile, state); err != nil {

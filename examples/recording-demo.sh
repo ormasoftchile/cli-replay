@@ -74,15 +74,8 @@ echo ""
 
 # ─── Demo 5: Validate the generated scenario ─────────────────────────
 echo "--- Demo 5: Validate a generated scenario ---"
-# Note: 'run' subcommand lives in cmd/cli-replay binary, not the Cobra root
-RUN_BINARY="${CLI_REPLAY_RUN_BIN:-./bin/cli-replay-run}"
-if [ -x "$RUN_BINARY" ]; then
-    echo "Running: $RUN_BINARY run $OUTDIR/single.yaml"
-    "$RUN_BINARY" run "$OUTDIR/single.yaml" && echo "Validation: PASS (exit code 0)" || echo "Validation: FAIL (exit code $?)"
-else
-    echo "Skipping validation (build cmd/cli-replay for 'run' support):"
-    echo "  go build -o bin/cli-replay-run ./cmd/cli-replay"
-fi
+echo "Running: $BINARY run $OUTDIR/single.yaml"
+"$BINARY" run "$OUTDIR/single.yaml" && echo "Validation: PASS (exit code 0)" || echo "Validation: FAIL (exit code $?)"
 echo ""
 
 echo "=== All demos complete ==="

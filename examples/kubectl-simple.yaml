@@ -1,14 +1,20 @@
 # Simple kubectl interception example
-# 
-# Usage:
-#   ln -s $(which cli-replay) /tmp/kubectl
-#   export PATH=/tmp:$PATH
-#   export CLI_REPLAY_SCENARIO=$(pwd)/examples/kubectl-simple.yaml
-#   cli-replay run examples/kubectl-simple.yaml
+#
+# Setup (PowerShell):
+#   .\cli-replay.exe run examples\kubectl-simple.yaml | Invoke-Expression
+#   kubectl get pods
+#   kubectl delete pod web-0
+#   kubectl get pods
+#   .\cli-replay.exe verify examples\kubectl-simple.yaml
+#   .\cli-replay.exe clean examples\kubectl-simple.yaml
+#
+# Setup (bash/zsh):
+#   eval "$(cli-replay run examples/kubectl-simple.yaml)"
 #   kubectl get pods
 #   kubectl delete pod web-0
 #   kubectl get pods
 #   cli-replay verify examples/kubectl-simple.yaml
+#   cli-replay clean examples/kubectl-simple.yaml
 
 meta:
   name: "kubectl-simple"

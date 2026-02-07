@@ -1,7 +1,7 @@
 # cli-replay Makefile
 # Build targets for development and release
 
-.PHONY: build test lint fmt clean install help record-demo
+.PHONY: build test lint fmt clean install help
 
 # Binary name
 BINARY := cli-replay
@@ -20,33 +20,24 @@ all: lint test build
 # Build the binary
 build:
 	@mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY) ./cmd/cli-replay
-
-# Build the record-enabled binary (Cobra root with record subcommand)
-build-record:
-	@mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-record .
-
-# Run the recording demo
-record-demo: build-record
-	CLI_REPLAY_BIN=$(BIN_DIR)/$(BINARY)-record ./examples/recording-demo.sh
+	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY) .
 
 # Build for all platforms (release)
 build-all: build-linux build-darwin build-windows
 
 build-linux:
 	@mkdir -p $(BIN_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-amd64 ./cmd/cli-replay
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-arm64 ./cmd/cli-replay
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-amd64 .
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-arm64 .
 
 build-darwin:
 	@mkdir -p $(BIN_DIR)
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-amd64 ./cmd/cli-replay
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-arm64 ./cmd/cli-replay
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-amd64 .
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-arm64 .
 
 build-windows:
 	@mkdir -p $(BIN_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-windows-amd64.exe ./cmd/cli-replay
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-windows-amd64.exe .
 
 ## Test targets
 
@@ -83,7 +74,7 @@ fmt-check:
 
 # Install binary to GOPATH/bin
 install: build
-	go install ./cmd/cli-replay
+	go install .
 
 # Clean build artifacts
 clean:
@@ -107,7 +98,6 @@ help:
 	@echo ""
 	@echo "Build targets:"
 	@echo "  build         Build the binary (default)"
-	@echo "  build-record  Build the record-enabled binary"
 	@echo "  build-all     Build for all platforms"
 	@echo "  install       Install to GOPATH/bin"
 	@echo ""
@@ -120,9 +110,6 @@ help:
 	@echo "  lint         Run golangci-lint"
 	@echo "  fmt          Format code"
 	@echo "  fmt-check    Check code formatting"
-	@echo ""
-	@echo "Demo targets:"
-	@echo "  record-demo  Run the recording demo script"
 	@echo ""
 	@echo "Utility targets:"
 	@echo "  clean        Remove build artifacts"

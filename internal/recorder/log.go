@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ type RecordingEntry struct {
 	Exit      int      `json:"exit"`
 	Stdout    string   `json:"stdout"`
 	Stderr    string   `json:"stderr"`
+	Encoding  string   `json:"encoding,omitempty"` // "" = UTF-8 text, "base64" = raw bytes
 }
 
 // RecordingLog represents the JSONL log file structure for parsing recorded commands.
@@ -70,6 +72,7 @@ func ReadRecordingLog(filePath string) (*RecordingLog, error) {
 }
 
 // ToRecordedCommands converts RecordingEntry slice to RecordedCommand slice.
+// If an entry has Encoding "base64", stdout and stderr are decoded before conversion.
 func (l *RecordingLog) ToRecordedCommands() ([]RecordedCommand, error) {
 	commands := make([]RecordedCommand, 0, len(l.Entries))
 
@@ -79,12 +82,29 @@ func (l *RecordingLog) ToRecordedCommands() ([]RecordedCommand, error) {
 			return nil, fmt.Errorf("entry %d: invalid timestamp format: %w", i, err)
 		}
 
+		stdout := entry.Stdout
+		stderr := entry.Stderr
+
+		// Decode base64-encoded output (FR-015)
+		if entry.Encoding == "base64" {
+			outBytes, err := base64.StdEncoding.DecodeString(entry.Stdout)
+			if err != nil {
+				return nil, fmt.Errorf("entry %d: failed to decode base64 stdout: %w", i, err)
+			}
+			errBytes, err := base64.StdEncoding.DecodeString(entry.Stderr)
+			if err != nil {
+				return nil, fmt.Errorf("entry %d: failed to decode base64 stderr: %w", i, err)
+			}
+			stdout = string(outBytes)
+			stderr = string(errBytes)
+		}
+
 		cmd := RecordedCommand{
 			Timestamp: timestamp,
 			Argv:      entry.Argv,
 			ExitCode:  entry.Exit,
-			Stdout:    entry.Stdout,
-			Stderr:    entry.Stderr,
+			Stdout:    stdout,
+			Stderr:    stderr,
 		}
 
 		if err := cmd.Validate(); err != nil {

@@ -140,3 +140,121 @@ func TestArgvMatch_EdgeCases(t *testing.T) {
 		assert.False(t, ArgvMatch(expected, received))
 	})
 }
+
+func TestArgvMatch_Wildcard(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected []string
+		received []string
+		want     bool
+	}{
+		{
+			name:     "any matches any value",
+			expected: []string{"az", "group", "list", "--subscription", "{{ .any }}"},
+			received: []string{"az", "group", "list", "--subscription", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+			want:     true,
+		},
+		{
+			name:     "any matches empty string",
+			expected: []string{"cmd", "{{ .any }}"},
+			received: []string{"cmd", ""},
+			want:     true,
+		},
+		{
+			name:     "any without spaces",
+			expected: []string{"cmd", "{{.any}}"},
+			received: []string{"cmd", "anything"},
+			want:     true,
+		},
+		{
+			name:     "any does not change length check",
+			expected: []string{"cmd", "{{ .any }}"},
+			received: []string{"cmd"},
+			want:     false,
+		},
+		{
+			name:     "any in first position",
+			expected: []string{"{{ .any }}", "get", "pods"},
+			received: []string{"kubectl", "get", "pods"},
+			want:     true,
+		},
+		{
+			name:     "multiple any wildcards",
+			expected: []string{"cmd", "{{ .any }}", "{{ .any }}"},
+			received: []string{"cmd", "foo", "bar"},
+			want:     true,
+		},
+		{
+			name:     "literal and any mixed",
+			expected: []string{"az", "{{ .any }}", "list", "{{ .any }}"},
+			received: []string{"az", "group", "list", "--all"},
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ArgvMatch(tt.expected, tt.received)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestArgvMatch_Regex(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected []string
+		received []string
+		want     bool
+	}{
+		{
+			name:     "uuid regex matches uuid",
+			expected: []string{"az", "--sub", `{{ .regex "^[0-9a-f-]{36}$" }}`},
+			received: []string{"az", "--sub", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+			want:     true,
+		},
+		{
+			name:     "uuid regex rejects non-uuid",
+			expected: []string{"az", "--sub", `{{ .regex "^[0-9a-f-]{36}$" }}`},
+			received: []string{"az", "--sub", "not-a-uuid"},
+			want:     false,
+		},
+		{
+			name:     "number regex",
+			expected: []string{"cmd", `{{ .regex "^[0-9]+$" }}`},
+			received: []string{"cmd", "42"},
+			want:     true,
+		},
+		{
+			name:     "number regex rejects text",
+			expected: []string{"cmd", `{{ .regex "^[0-9]+$" }}`},
+			received: []string{"cmd", "abc"},
+			want:     false,
+		},
+		{
+			name:     "prefix regex",
+			expected: []string{"cmd", `{{ .regex "^my-rg-" }}`},
+			received: []string{"cmd", "my-rg-eastus"},
+			want:     true,
+		},
+		{
+			name:     "invalid regex is no match",
+			expected: []string{"cmd", `{{ .regex "[invalid" }}`},
+			received: []string{"cmd", "anything"},
+			want:     false,
+		},
+		{
+			name:     "mix of literal any and regex",
+			expected: []string{"az", "group", "list", "{{ .any }}", `{{ .regex "^(table|json)$" }}`},
+			received: []string{"az", "group", "list", "--output", "table"},
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ArgvMatch(tt.expected, tt.received)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

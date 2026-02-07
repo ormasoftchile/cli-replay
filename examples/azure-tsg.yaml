@@ -1,0 +1,119 @@
+# Azure TSG (Troubleshooting Guide) example
+#
+# Simulates a DRI investigating a failing Azure App Service.
+# Each step's output feeds into the next command's arguments —
+# just like a real TSG where you discover resource names at runtime.
+#
+# Demonstrates:
+#   - {{ .any }}       wildcard matching (subscription IDs, resource names)
+#   - {{ .regex "…" }} pattern matching (GUIDs, app names)
+#   - Multi-step chained scenario (output → next args)
+#
+# Quick start:
+#   cli-replay run examples/azure-tsg.yaml | Invoke-Expression
+#   .\examples\run-azure-tsg.ps1
+#   cli-replay verify
+#   cli-replay clean
+
+meta:
+  name: "azure-tsg-app-service"
+  description: "Troubleshoot a failing Azure App Service"
+
+steps:
+  # Step 1: Verify the active subscription
+  - match:
+      argv: ["az", "account", "show"]
+    respond:
+      exit: 0
+      stdout: |
+        {
+          "id": "00000000-aaaa-bbbb-cccc-123456789abc",
+          "name": "DRI-Sandbox",
+          "state": "Enabled",
+          "isDefault": true,
+          "tenantId": "eeeeeeee-ffff-0000-1111-222222222222"
+        }
+
+  # Step 2: List webapps — accept any resource group name
+  - match:
+      argv: ["az", "webapp", "list", "--resource-group", "{{ .any }}"]
+    respond:
+      exit: 0
+      stdout: |
+        [
+          {
+            "name": "my-app",
+            "state": "Running",
+            "resourceGroup": "contoso-prod-rg",
+            "defaultHostName": "my-app.azurewebsites.net",
+            "kind": "app,linux",
+            "healthCheckPath": "/healthz"
+          },
+          {
+            "name": "my-api",
+            "state": "Stopped",
+            "resourceGroup": "contoso-prod-rg",
+            "defaultHostName": "my-api.azurewebsites.net",
+            "kind": "app,linux",
+            "healthCheckPath": "/healthz"
+          }
+        ]
+
+  # Step 3: Inspect the unhealthy app — name & RG come from step 2 output
+  - match:
+      argv: ["az", "webapp", "show", "--name", "{{ .regex \"[a-z][a-z0-9-]+\" }}", "--resource-group", "{{ .any }}"]
+    respond:
+      exit: 0
+      stdout: |
+        {
+          "name": "my-api",
+          "state": "Stopped",
+          "availabilityState": "DisasterRecovery",
+          "httpsOnly": true,
+          "kind": "app,linux",
+          "lastModifiedTimeUtc": "2026-02-05T14:30:00Z",
+          "outboundIpAddresses": "20.1.2.3,20.1.2.4",
+          "siteConfig": {
+            "linuxFxVersion": "NODE|18-lts",
+            "alwaysOn": true,
+            "appCommandLine": "npm start"
+          }
+        }
+
+  # Step 4: Tail logs — name & RG forwarded from step 2
+  - match:
+      argv: ["az", "webapp", "log", "tail", "--name", "{{ .any }}", "--resource-group", "{{ .any }}"]
+    respond:
+      exit: 0
+      stdout: |
+        2026-02-05T14:32:01  ERROR - Container my-api_0 didn't respond to HTTP pings on port 8080
+        2026-02-05T14:32:05  ERROR - Container my-api_0 failed to start. oom-killed
+        2026-02-05T14:32:10  INFO  - Stopping site my-api because it failed during startup.
+
+  # Step 5: Restart the app — name & RG forwarded from step 2
+  - match:
+      argv: ["az", "webapp", "restart", "--name", "{{ .any }}", "--resource-group", "{{ .any }}"]
+    respond:
+      exit: 0
+      stdout: ""
+
+  # Step 6: Confirm it recovered
+  - match:
+      argv: ["az", "webapp", "show", "--name", "{{ .regex \"[a-z][a-z0-9-]+\" }}", "--resource-group", "{{ .any }}"]
+    respond:
+      exit: 0
+      stdout: |
+        {
+          "name": "my-api",
+          "state": "Running",
+          "availabilityState": "Normal",
+          "httpsOnly": true,
+          "kind": "app,linux",
+          "lastModifiedTimeUtc": "2026-02-06T09:00:00Z",
+          "outboundIpAddresses": "20.1.2.3,20.1.2.4",
+          "siteConfig": {
+            "linuxFxVersion": "NODE|18-lts",
+            "alwaysOn": true,
+            "appCommandLine": "npm start"
+          }
+        }

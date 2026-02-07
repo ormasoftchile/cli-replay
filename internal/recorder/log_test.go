@@ -291,3 +291,79 @@ func TestRecordingLog_ToRecordedCommands(t *testing.T) {
 	assert.Empty(t, commands[1].Stdout)
 	assert.Equal(t, "Error\n", commands[1].Stderr)
 }
+
+// TestRecordingEntry_Base64EncodingRoundtrip tests that base64-encoded entries
+// are correctly written and read back (FR-015).
+func TestRecordingEntry_Base64EncodingRoundtrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "base64.jsonl")
+
+	// JSONL with base64-encoded output (as would be written by LogRecording for binary data)
+	content := `{"timestamp":"2024-01-15T10:30:00Z","argv":["cat","binary.dat"],"exit":0,"stdout":"SGVsbG8gV29ybGQ=","stderr":"","encoding":"base64"}
+`
+	require.NoError(t, os.WriteFile(logPath, []byte(content), 0600))
+
+	log, err := ReadRecordingLog(logPath)
+	require.NoError(t, err)
+	require.Len(t, log.Entries, 1)
+
+	// The raw entry should have the base64-encoded string
+	assert.Equal(t, "base64", log.Entries[0].Encoding)
+	assert.Equal(t, "SGVsbG8gV29ybGQ=", log.Entries[0].Stdout)
+
+	// Convert to RecordedCommands — stdout should be decoded
+	commands, err := log.ToRecordedCommands()
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+
+	assert.Equal(t, "Hello World", commands[0].Stdout)
+	assert.Empty(t, commands[0].Stderr)
+}
+
+// TestRecordingEntry_Base64EncodingAbsent tests backward compatibility — entries
+// without the encoding field are treated as UTF-8 text.
+func TestRecordingEntry_Base64EncodingAbsent(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "noencoding.jsonl")
+
+	content := `{"timestamp":"2024-01-15T10:30:00Z","argv":["echo","hi"],"exit":0,"stdout":"hi\n","stderr":""}
+`
+	require.NoError(t, os.WriteFile(logPath, []byte(content), 0600))
+
+	log, err := ReadRecordingLog(logPath)
+	require.NoError(t, err)
+
+	commands, err := log.ToRecordedCommands()
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+
+	assert.Equal(t, "hi\n", commands[0].Stdout)
+	assert.Empty(t, log.Entries[0].Encoding)
+}
+
+// TestRecordingEntry_Base64MixedEntries tests that a log with both UTF-8 and
+// base64 entries can be read correctly.
+func TestRecordingEntry_Base64MixedEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "mixed.jsonl")
+
+	content := `{"timestamp":"2024-01-15T10:30:00Z","argv":["echo","hello"],"exit":0,"stdout":"hello\n","stderr":""}
+{"timestamp":"2024-01-15T10:30:01Z","argv":["cat","binary.dat"],"exit":0,"stdout":"AQID","stderr":"","encoding":"base64"}
+{"timestamp":"2024-01-15T10:30:02Z","argv":["echo","done"],"exit":0,"stdout":"done\n","stderr":""}
+`
+	require.NoError(t, os.WriteFile(logPath, []byte(content), 0600))
+
+	log, err := ReadRecordingLog(logPath)
+	require.NoError(t, err)
+
+	commands, err := log.ToRecordedCommands()
+	require.NoError(t, err)
+	require.Len(t, commands, 3)
+
+	// First: plain UTF-8
+	assert.Equal(t, "hello\n", commands[0].Stdout)
+	// Second: base64 decoded (bytes 0x01, 0x02, 0x03)
+	assert.Equal(t, string([]byte{0x01, 0x02, 0x03}), commands[1].Stdout)
+	// Third: plain UTF-8
+	assert.Equal(t, "done\n", commands[2].Stdout)
+}

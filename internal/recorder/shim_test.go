@@ -1,137 +1,81 @@
 package recorder
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGenerateShim(t *testing.T) {
-	tests := []struct {
-		name        string
-		command     string
-		logPath     string
-		shimDir     string
-		wantContent []string
-		wantErr     bool
-	}{
-		{
-			name:    "simple command",
-			command: "kubectl",
-			logPath: "/tmp/recording.jsonl",
-			shimDir: "/tmp/shims",
-			wantContent: []string{
-				"#!/usr/bin/env bash",
-				"LOGFILE=\"/tmp/recording.jsonl\"",
-				"CLI_REPLAY_IN_SHIM",
-				"kubectl",
-				">>",
-			},
-			wantErr: false,
-		},
-		{
-			name:    "hyphenated command",
-			command: "docker-compose",
-			logPath: "/var/tmp/logs/session.jsonl",
-			shimDir: "/var/tmp/shims",
-			wantContent: []string{
-				"#!/usr/bin/env bash",
-				"LOGFILE=\"/var/tmp/logs/session.jsonl\"",
-				"CLI_REPLAY_IN_SHIM",
-				"docker-compose",
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			content, err := GenerateShim(tt.command, tt.logPath, tt.shimDir)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				assert.NotEmpty(t, content)
-
-				// Verify content contains expected strings
-				for _, expected := range tt.wantContent {
-					assert.Contains(t, content, expected, "shim should contain %q", expected)
-				}
-			}
-		})
-	}
-}
-
-func TestWriteShim(t *testing.T) {
+func TestLogRecording(t *testing.T) {
 	tmpDir := t.TempDir()
-	shimDir := filepath.Join(tmpDir, "shims")
-	shimPath := filepath.Join(shimDir, "kubectl")
-	logPath := filepath.Join(tmpDir, "recording.jsonl")
+	logPath := filepath.Join(tmpDir, "test.jsonl")
 
-	err := WriteShim(shimPath, "kubectl", logPath, shimDir)
+	ts := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
+	err := LogRecording(logPath, ts, []string{"kubectl", "get", "pods"}, 0, "NAME    READY\n", "")
 	require.NoError(t, err)
 
-	// Verify shim file was created
-	assert.FileExists(t, shimPath)
+	// Verify file was written
+	assert.FileExists(t, logPath)
 
-	// Verify shim is executable
-	info, err := os.Stat(shimPath)
+	content, err := os.ReadFile(logPath) //nolint:gosec
 	require.NoError(t, err)
 
-	// Check executable bit (mode should have x permission)
-	mode := info.Mode()
-	assert.NotEqual(t, os.FileMode(0), mode&0111, "shim should be executable")
-
-	// Verify content
-	content, err := os.ReadFile(shimPath) //nolint:gosec // test file path
+	var entry RecordingEntry
+	err = json.Unmarshal(content, &entry)
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "#!/usr/bin/env bash")
-	assert.Contains(t, string(content), logPath)
-	assert.Contains(t, string(content), "CLI_REPLAY_IN_SHIM")
+
+	assert.Equal(t, "2024-01-15T10:30:00Z", entry.Timestamp)
+	assert.Equal(t, []string{"kubectl", "get", "pods"}, entry.Argv)
+	assert.Equal(t, 0, entry.Exit)
+	assert.Equal(t, "NAME    READY\n", entry.Stdout)
+	assert.Empty(t, entry.Stderr)
 }
 
-func TestGenerateAllShims(t *testing.T) {
+func TestLogRecording_AppendMultiple(t *testing.T) {
 	tmpDir := t.TempDir()
-	shimDir := filepath.Join(tmpDir, "shims")
-	logPath := filepath.Join(tmpDir, "recording.jsonl")
+	logPath := filepath.Join(tmpDir, "multi.jsonl")
 
-	commands := []string{"kubectl", "docker", "git"}
+	ts1 := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
+	ts2 := time.Date(2024, 1, 15, 10, 30, 5, 0, time.UTC)
 
-	err := GenerateAllShims(shimDir, commands, logPath)
+	err := LogRecording(logPath, ts1, []string{"kubectl", "get", "pods"}, 0, "out1\n", "")
 	require.NoError(t, err)
 
-	// Verify shim directory was created
-	assert.DirExists(t, shimDir)
+	err = LogRecording(logPath, ts2, []string{"kubectl", "describe", "pod"}, 1, "", "err2\n")
+	require.NoError(t, err)
 
-	// Verify all shims were created
-	for _, cmd := range commands {
-		shimPath := filepath.Join(shimDir, cmd)
-		assert.FileExists(t, shimPath)
+	// Read and verify both entries via ReadRecordingLog
+	log, err := ReadRecordingLog(logPath)
+	require.NoError(t, err)
+	require.Len(t, log.Entries, 2)
 
-		// Verify executable
-		info, err := os.Stat(shimPath)
-		require.NoError(t, err)
-		assert.NotEqual(t, os.FileMode(0), info.Mode()&0111, "%s should be executable", cmd)
-	}
+	assert.Equal(t, "kubectl", log.Entries[0].Argv[0])
+	assert.Equal(t, 0, log.Entries[0].Exit)
+	assert.Equal(t, "kubectl", log.Entries[1].Argv[0])
+	assert.Equal(t, 1, log.Entries[1].Exit)
 }
 
-func TestGenerateAllShims_EmptyList(t *testing.T) {
+func TestLogRecording_NonZeroExit(t *testing.T) {
 	tmpDir := t.TempDir()
-	shimDir := filepath.Join(tmpDir, "shims")
-	logPath := filepath.Join(tmpDir, "recording.jsonl")
+	logPath := filepath.Join(tmpDir, "exit.jsonl")
 
-	err := GenerateAllShims(shimDir, []string{}, logPath)
+	ts := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
+	err := LogRecording(logPath, ts, []string{"false"}, 1, "", "")
 	require.NoError(t, err)
 
-	// Shim directory should still be created
-	assert.DirExists(t, shimDir)
+	log, err := ReadRecordingLog(logPath)
+	require.NoError(t, err)
+	require.Len(t, log.Entries, 1)
+	assert.Equal(t, 1, log.Entries[0].Exit)
 }
 
-func TestWriteShim_InvalidPath(t *testing.T) {
-	// Try to write to non-existent directory without creation
-	err := WriteShim("/nonexistent/path/kubectl", "kubectl", "/tmp/log.jsonl", "/tmp/shims")
+func TestLogRecording_InvalidPath(t *testing.T) {
+	err := LogRecording("/nonexistent/dir/log.jsonl", time.Now(), []string{"cmd"}, 0, "", "")
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to open log file")
 }
