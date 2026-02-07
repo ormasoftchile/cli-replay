@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
 # Azure TSG (Troubleshooting Guide) example
 #
 # Simulates a DRI investigating a failing Azure App Service.

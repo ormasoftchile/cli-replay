@@ -161,6 +161,53 @@ steps:
 - `calls.min: 0` creates an optional step (can be skipped entirely)
 - Unknown fields are rejected (strict YAML parsing)
 
+### Step Groups (Unordered Matching)
+
+Steps can be grouped for order-independent matching. Commands within a group can be called in any order, but all group steps must be satisfied before the scenario advances past the group (barrier semantics).
+
+```yaml
+steps:
+  - match:
+      argv: [git, status]
+    respond:
+      exit: 0
+      stdout: "On branch main"
+
+  - group:
+      mode: unordered
+      name: pre-flight        # Optional: auto-generated as "group-N" if omitted
+      steps:
+        - match:
+            argv: [az, account, show]
+          respond:
+            exit: 0
+            stdout: '{"name": "my-sub"}'
+        - match:
+            argv: [docker, info]
+          respond:
+            exit: 0
+            stdout: "Server Version: 24.0"
+        - match:
+            argv: [kubectl, cluster-info]
+          respond:
+            exit: 0
+            stdout: "Kubernetes control plane is running"
+
+  - match:
+      argv: [kubectl, apply, -f, app.yaml]
+    respond:
+      exit: 0
+      stdout: "deployment.apps/app configured"
+```
+
+**Group rules:**
+- `mode` must be `"unordered"` (the only supported mode)
+- Groups cannot be nested (no groups inside groups)
+- Each group must contain at least one step
+- Call bounds (`calls.min`/`calls.max`) work per-step within groups
+- When all steps in a group meet their `min` counts, a non-matching command advances past the group
+- When all steps reach their `max` counts, the group is automatically exhausted
+
 ## Commands
 
 ### cli-replay record
@@ -261,6 +308,21 @@ cli-replay verify scenario.yaml
 
 Exit code 0 if all steps met their minimum call counts, 1 if steps remain unsatisfied.
 
+#### Structured Output
+
+Use `--format` to get machine-readable output for CI pipelines:
+
+```bash
+# JSON output (pipe to jq for pretty-printing)
+cli-replay verify scenario.yaml --format json | jq .
+
+# JUnit XML output (for CI dashboards)
+cli-replay verify scenario.yaml --format junit > results.xml
+
+# Default text output (human-readable)
+cli-replay verify scenario.yaml --format text
+```
+
 When call count bounds are used, verify reports per-step invocation counts:
 
 ```
@@ -268,6 +330,74 @@ When call count bounds are used, verify reports per-step invocation counts:
   Step 1: kubectl get pods — 4 calls (min: 1, max: 5) ✓
   Step 2: kubectl apply — 1 call (min: 1, max: 1) ✓
   Step 3: kubectl rollout status — 2 calls (min: 1, max: 3) ✓
+```
+
+Steps inside groups show the group name in the label:
+
+```
+  Step 2: [group:pre-flight] az account show — 1 call (min: 1, max: 2) ✓
+```
+
+### cli-replay exec
+
+Run a child process with full intercept lifecycle management in a single command — setup, spawn, verify, and cleanup are handled automatically:
+
+```bash
+cli-replay exec scenario.yaml -- bash -c 'kubectl get pods && kubectl apply -f deploy.yaml'
+```
+
+This is the recommended mode for CI pipelines. No `eval`, no manual cleanup.
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--allowed-commands` | string | `""` | Comma-separated list of commands allowed to be intercepted |
+| `--format` | string | `""` | Output format for verification: `json`, `junit`, or `text` |
+| `--report-file` | string | `""` | Write structured verification output to a file path |
+
+When `--report-file` is set, verification results are written to the specified file. When `--format` is set without `--report-file`, structured output goes to stderr (stdout is reserved for the child process).
+
+```bash
+# Write JUnit report for CI dashboard
+cli-replay exec --format junit --report-file results.xml scenario.yaml -- make deploy
+
+# JSON output to stderr
+cli-replay exec --format json scenario.yaml -- bash test.sh
+```
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Child process exited 0 **and** all scenario steps were satisfied |
+| 1 | Verification failure — child exited 0 but scenario steps were not fully consumed |
+| N | Child process exited with code N (propagated directly) |
+| 126 | Child command found but not executable |
+| 127 | Child command not found |
+| 128+N | Child process killed by signal N (e.g., 143 = SIGTERM) |
+
+#### How It Works
+
+1. **Pre-spawn** — Loads the scenario, validates the security allowlist, and creates an isolated session ID
+2. **Setup** — Creates the intercept directory with symlinks (or `.cmd` wrappers on Windows), initializes the state file, and builds a modified environment with `PATH`, `CLI_REPLAY_SESSION`, and `CLI_REPLAY_SCENARIO`
+3. **Spawn** — Runs the child process with the modified environment. Signals (SIGINT, SIGTERM) are forwarded to the child
+4. **Verify + Cleanup** — After the child exits, reloads state, checks all steps met their minimum call counts, prints diagnostics, and cleans up the intercept directory. Cleanup is idempotent and runs even if the child fails
+
+#### Examples
+
+```bash
+# Basic usage
+cli-replay exec scenario.yaml -- make deploy
+
+# With security allowlist
+cli-replay exec --allowed-commands kubectl,az scenario.yaml -- bash deploy.sh
+
+# In CI (GitHub Actions)
+- run: cli-replay exec test-scenario.yaml -- ./run-tests.sh
+
+# Multiple args after --
+cli-replay exec scenario.yaml -- bash -c 'echo hello && echo goodbye'
 ```
 
 ### cli-replay clean
@@ -278,6 +408,42 @@ Clean up an intercept session (remove wrappers and state):
 cli-replay clean scenario.yaml
 cli-replay clean              # uses CLI_REPLAY_SCENARIO from env
 ```
+
+Clean is idempotent — it is safe to call even if the state file has already been removed.
+
+## Session Isolation
+
+When running parallel CI jobs, each `cli-replay run` or `cli-replay exec` invocation generates a unique session ID (set via `CLI_REPLAY_SESSION`). State files are scoped to the session, so parallel test runs using the same scenario file do not interfere with each other.
+
+```bash
+# Two parallel CI jobs using the same scenario — no conflict
+# Job A
+eval "$(cli-replay run scenario.yaml)"   # gets session-A
+kubectl get pods
+cli-replay verify scenario.yaml          # checks session-A state only
+
+# Job B (runs concurrently)
+eval "$(cli-replay run scenario.yaml)"   # gets session-B
+kubectl get pods
+cli-replay verify scenario.yaml          # checks session-B state only
+```
+
+With `exec` mode, session isolation is automatic and requires no manual management.
+
+## Trap Auto-Cleanup (eval pattern)
+
+When using the `eval "$(cli-replay run ...)"` pattern with bash, zsh, or sh, cli-replay automatically emits a POSIX trap that cleans up the intercept session on shell exit or signals:
+
+```bash
+eval "$(cli-replay run scenario.yaml)"
+# The emitted shell code includes:
+#   _cli_replay_clean() { ... cli-replay clean "$CLI_REPLAY_SCENARIO" ...; }
+#   trap '_cli_replay_clean' EXIT INT TERM
+```
+
+This ensures cleanup happens even if the script is interrupted (Ctrl+C) or terminated. The trap guard is idempotent — it only runs cleanup once regardless of how many signals fire.
+
+> **Note**: Trap auto-cleanup is emitted for bash, zsh, and sh only. PowerShell and cmd sessions require manual cleanup via `cli-replay clean`.
 
 ## Environment Variables
 
@@ -401,6 +567,43 @@ steps:
 - If `match.stdin` is not set, stdin content is ignored (backward compatible)
 - During recording with `--command` flags, stdin is automatically captured when piped (non-TTY)
 
+## JSON Schema for Scenario Files
+
+cli-replay provides a JSON Schema for scenario YAML files, enabling IDE autocompletion, inline validation, and hover documentation.
+
+### Per-File Modeline
+
+Add this comment as the first line of any scenario YAML file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+meta:
+  name: my-scenario
+steps:
+  - match:
+      argv: [kubectl, get, pods]
+    respond:
+      exit: 0
+```
+
+### VS Code Workspace Settings
+
+To apply the schema to all YAML files matching `*scenario*.yaml` or `*recording*.yaml`, add to `.vscode/settings.json`:
+
+```json
+{
+  "yaml.schemas": {
+    "https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json": [
+      "**/scenarios/**/*.yaml",
+      "**/recordings/**/*.yaml",
+      "**/examples/**/*.yaml"
+    ]
+  }
+}
+```
+
+Requires the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) (`redhat.vscode-yaml`).
+
 ## Mismatch Diagnostics
 
 When a command doesn't match the expected step, cli-replay provides detailed per-element diff output:
@@ -425,12 +628,12 @@ Color output is auto-detected from the terminal, and can be controlled via `CLI_
 3. **Command Detection**: When invoked via symlink, cli-replay reads `CLI_REPLAY_SCENARIO`
 4. **Step Matching**: Compares incoming argv against the next expected step
 5. **Response Replay**: Writes stdout/stderr and returns exit code
-6. **State Persistence**: Tracks progress in the system temp directory (`os.TempDir()` → `/tmp` on Unix, `%TEMP%` on Windows)
+6. **State Persistence**: Tracks progress in `.cli-replay/` next to the scenario file (state files, intercept directories)
 
 ## Limitations
 
 - **Strict ordering** — commands must match in exact sequence; no support for unordered or concurrent steps
-- **No parallel execution** — state is per-scenario, not per-process (session isolation helps for parallel *test runs*, but not parallel *steps within* a scenario)
+- **No parallel execution** — state is per-scenario, not per-process. Session isolation (via `CLI_REPLAY_SESSION`) supports parallel *test runs*, but not parallel *steps within* a scenario
 - **Fixed responses only** — no conditional or dynamic response logic based on runtime state
 - **stdin size limit** — piped input is capped at 1 MB during both replay and recording
 
@@ -474,7 +677,7 @@ golangci-lint run
 |---------|-------------------|-------------|
 | Record commands | ✅ Bash shims | ✅ .cmd + .ps1 shims |
 | Replay scenarios | ✅ Symlinks | ✅ .cmd wrappers |
-| State persistence | ✅ `/tmp/` | ✅ `%TEMP%` |
+| State persistence | ✅ `.cli-replay/` | ✅ `.cli-replay/` |
 | Build | ✅ `make build` | ✅ `go build` / `build.ps1` |
 | CI | ✅ GitHub Actions | ✅ GitHub Actions |
 

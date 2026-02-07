@@ -20,11 +20,11 @@ func TestScenario_Validate(t *testing.T) {
 			name: "valid scenario with single step",
 			scenario: Scenario{
 				Meta: Meta{Name: "test-scenario"},
-				Steps: []Step{
-					{
+				Steps: []StepElement{
+					{Step: &Step{
 						Match:   Match{Argv: []string{"kubectl", "get", "pods"}},
 						Respond: Response{Exit: 0, Stdout: "pod-output"},
-					},
+					}},
 				},
 			},
 			wantErr: false,
@@ -37,15 +37,15 @@ func TestScenario_Validate(t *testing.T) {
 					Description: "A multi-step scenario",
 					Vars:        map[string]string{"cluster": "prod"},
 				},
-				Steps: []Step{
-					{
+				Steps: []StepElement{
+					{Step: &Step{
 						Match:   Match{Argv: []string{"cmd1"}},
 						Respond: Response{Exit: 0},
-					},
-					{
+					}},
+					{Step: &Step{
 						Match:   Match{Argv: []string{"cmd2", "arg"}},
 						Respond: Response{Exit: 1, Stderr: "error"},
-					},
+					}},
 				},
 			},
 			wantErr: false,
@@ -54,7 +54,7 @@ func TestScenario_Validate(t *testing.T) {
 			name: "empty steps",
 			scenario: Scenario{
 				Meta:  Meta{Name: "empty"},
-				Steps: []Step{},
+				Steps: []StepElement{},
 			},
 			wantErr:     true,
 			errContains: "steps must contain at least one step",
@@ -426,8 +426,8 @@ steps:
 	err := yaml.Unmarshal([]byte(yamlContent), &scn)
 	require.NoError(t, err)
 	require.Len(t, scn.Steps, 1)
-	assert.Contains(t, scn.Steps[0].Match.Stdin, "apiVersion: v1")
-	assert.Contains(t, scn.Steps[0].Match.Stdin, "kind: Pod")
+	assert.Contains(t, scn.Steps[0].Step.Match.Stdin, "apiVersion: v1")
+	assert.Contains(t, scn.Steps[0].Step.Match.Stdin, "kind: Pod")
 }
 
 func TestCallBounds_YAMLParsing(t *testing.T) {
@@ -575,4 +575,223 @@ func TestResponse_Validate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// T019: StepElement/StepGroup validation tests
+
+func TestStepElement_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		elem        StepElement
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid leaf step",
+			elem: StepElement{Step: &Step{
+				Match: Match{Argv: []string{"cmd"}}, Respond: Response{Exit: 0},
+			}},
+		},
+		{
+			name: "valid group",
+			elem: StepElement{Group: &StepGroup{
+				Mode: "unordered",
+				Name: "g1",
+				Steps: []StepElement{
+					{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}},
+				},
+			}},
+		},
+		{
+			name:        "neither step nor group",
+			elem:        StepElement{},
+			wantErr:     true,
+			errContains: "must have either a step or a group",
+		},
+		{
+			name: "both step and group",
+			elem: StepElement{
+				Step:  &Step{Match: Match{Argv: []string{"cmd"}}, Respond: Response{Exit: 0}},
+				Group: &StepGroup{Mode: "unordered", Steps: []StepElement{{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}}}},
+			},
+			wantErr:     true,
+			errContains: "not both",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.elem.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestStepGroup_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		group       StepGroup
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid unordered group",
+			group: StepGroup{
+				Mode: "unordered",
+				Steps: []StepElement{
+					{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}},
+					{Step: &Step{Match: Match{Argv: []string{"b"}}, Respond: Response{Exit: 0}}},
+				},
+			},
+		},
+		{
+			name:        "empty group rejected",
+			group:       StepGroup{Mode: "unordered", Steps: []StepElement{}},
+			wantErr:     true,
+			errContains: "must contain at least one step",
+		},
+		{
+			name: "nested group rejected",
+			group: StepGroup{
+				Mode: "unordered",
+				Steps: []StepElement{
+					{Group: &StepGroup{Mode: "unordered", Steps: []StepElement{
+						{Step: &Step{Match: Match{Argv: []string{"x"}}, Respond: Response{Exit: 0}}},
+					}}},
+				},
+			},
+			wantErr:     true,
+			errContains: "nested groups are not allowed",
+		},
+		{
+			name: "unknown mode rejected",
+			group: StepGroup{
+				Mode:  "ordered",
+				Steps: []StepElement{{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}}},
+			},
+			wantErr:     true,
+			errContains: "unsupported group mode",
+		},
+		{
+			name: "nil step child rejected",
+			group: StepGroup{
+				Mode:  "unordered",
+				Steps: []StepElement{{}},
+			},
+			wantErr:     true,
+			errContains: "group children must be leaf steps",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.group.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestScenario_AutoNamingGroups(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{Name: "group-test"},
+		Steps: []StepElement{
+			{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}},
+			{Group: &StepGroup{
+				Mode:  "unordered",
+				Steps: []StepElement{{Step: &Step{Match: Match{Argv: []string{"b"}}, Respond: Response{Exit: 0}}}},
+			}},
+			{Group: &StepGroup{
+				Mode:  "unordered",
+				Steps: []StepElement{{Step: &Step{Match: Match{Argv: []string{"c"}}, Respond: Response{Exit: 0}}}},
+			}},
+		},
+	}
+	require.NoError(t, scn.Validate())
+
+	// Groups auto-named sequentially
+	assert.Equal(t, "group-1", scn.Steps[1].Group.Name)
+	assert.Equal(t, "group-2", scn.Steps[2].Group.Name)
+}
+
+func TestScenario_ExplicitNamePreserved(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{Name: "named-groups"},
+		Steps: []StepElement{
+			{Group: &StepGroup{
+				Mode: "unordered", Name: "pre-flight",
+				Steps: []StepElement{{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}}},
+			}},
+			{Group: &StepGroup{
+				Mode:  "unordered",
+				Steps: []StepElement{{Step: &Step{Match: Match{Argv: []string{"b"}}, Respond: Response{Exit: 0}}}},
+			}},
+		},
+	}
+	require.NoError(t, scn.Validate())
+
+	assert.Equal(t, "pre-flight", scn.Steps[0].Group.Name)
+	assert.Equal(t, "group-2", scn.Steps[1].Group.Name)
+}
+
+func TestScenario_FlatSteps(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{Name: "flat-test"},
+		Steps: []StepElement{
+			{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}},
+			{Group: &StepGroup{
+				Mode: "unordered", Name: "g1",
+				Steps: []StepElement{
+					{Step: &Step{Match: Match{Argv: []string{"b"}}, Respond: Response{Exit: 0}}},
+					{Step: &Step{Match: Match{Argv: []string{"c"}}, Respond: Response{Exit: 0}}},
+				},
+			}},
+			{Step: &Step{Match: Match{Argv: []string{"d"}}, Respond: Response{Exit: 0}}},
+		},
+	}
+
+	flat := scn.FlatSteps()
+	require.Len(t, flat, 4)
+	assert.Equal(t, []string{"a"}, flat[0].Match.Argv)
+	assert.Equal(t, []string{"b"}, flat[1].Match.Argv)
+	assert.Equal(t, []string{"c"}, flat[2].Match.Argv)
+	assert.Equal(t, []string{"d"}, flat[3].Match.Argv)
+}
+
+func TestScenario_GroupRanges(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{Name: "ranges-test"},
+		Steps: []StepElement{
+			{Step: &Step{Match: Match{Argv: []string{"a"}}, Respond: Response{Exit: 0}}},
+			{Group: &StepGroup{
+				Mode: "unordered", Name: "g1",
+				Steps: []StepElement{
+					{Step: &Step{Match: Match{Argv: []string{"b"}}, Respond: Response{Exit: 0}}},
+					{Step: &Step{Match: Match{Argv: []string{"c"}}, Respond: Response{Exit: 0}}},
+				},
+			}},
+			{Step: &Step{Match: Match{Argv: []string{"d"}}, Respond: Response{Exit: 0}}},
+			{Group: &StepGroup{
+				Mode: "unordered", Name: "g2",
+				Steps: []StepElement{
+					{Step: &Step{Match: Match{Argv: []string{"e"}}, Respond: Response{Exit: 0}}},
+				},
+			}},
+		},
+	}
+
+	ranges := scn.GroupRanges()
+	require.Len(t, ranges, 2)
+
+	assert.Equal(t, GroupRange{Start: 1, End: 3, Name: "g1", TopIndex: 1}, ranges[0])
+	assert.Equal(t, GroupRange{Start: 4, End: 5, Name: "g2", TopIndex: 3}, ranges[1])
 }

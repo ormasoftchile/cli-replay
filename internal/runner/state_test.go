@@ -62,8 +62,9 @@ func TestStateFilePath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := StateFilePath(tt.scenarioPath)
 
-			// Should be in temp directory
-			assert.Contains(t, path, os.TempDir())
+			// Should be in .cli-replay/ directory next to the scenario file
+			assert.Contains(t, path, ".cli-replay")
+			assert.Contains(t, path, filepath.Dir(tt.scenarioPath))
 
 			// Should have proper prefix
 			assert.Contains(t, filepath.Base(path), "cli-replay-")
@@ -604,4 +605,139 @@ func TestState_AllStepsMetMin_OptionalStep(t *testing.T) {
 	// Optional step not called, required step called
 	state.StepCounts = []int{0, 1}
 	assert.True(t, state.AllStepsMetMin(steps))
+}
+
+// T024: ActiveGroup state tracking tests
+
+func TestState_ActiveGroup_InitiallyNil(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 5)
+	assert.Nil(t, state.ActiveGroup)
+	assert.False(t, state.IsInGroup())
+}
+
+func TestState_EnterGroup_SetsIndex(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 5)
+	state.EnterGroup(2)
+	require.NotNil(t, state.ActiveGroup)
+	assert.Equal(t, 2, *state.ActiveGroup)
+	assert.True(t, state.IsInGroup())
+}
+
+func TestState_ExitGroup_ClearsToNil(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 5)
+	state.EnterGroup(1)
+	require.True(t, state.IsInGroup())
+
+	state.ExitGroup()
+	assert.Nil(t, state.ActiveGroup)
+	assert.False(t, state.IsInGroup())
+}
+
+func TestState_ActiveGroup_PersistAndRestoreJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "group.state")
+
+	state := NewState("/path/to/scenario.yaml", "hash", 5)
+	state.EnterGroup(3)
+
+	err := WriteState(stateFile, state)
+	require.NoError(t, err)
+
+	loaded, err := ReadState(stateFile)
+	require.NoError(t, err)
+	require.NotNil(t, loaded.ActiveGroup)
+	assert.Equal(t, 3, *loaded.ActiveGroup)
+}
+
+func TestState_ActiveGroup_NilOmittedInJSON(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+	// active_group should be omitted when nil
+	assert.NotContains(t, string(data), "active_group")
+}
+
+func TestState_CurrentGroupRange(t *testing.T) {
+	ranges := []scenario.GroupRange{
+		{Start: 0, End: 2, Name: "group-1", TopIndex: 0},
+		{Start: 3, End: 5, Name: "group-2", TopIndex: 2},
+	}
+
+	state := NewState("/path/to/scenario.yaml", "hash", 6)
+
+	// No active group → nil
+	assert.Nil(t, state.CurrentGroupRange(ranges))
+
+	// Active group → returns correct range
+	state.EnterGroup(1)
+	gr := state.CurrentGroupRange(ranges)
+	require.NotNil(t, gr)
+	assert.Equal(t, "group-2", gr.Name)
+	assert.Equal(t, 3, gr.Start)
+	assert.Equal(t, 5, gr.End)
+
+	// Out of bounds → nil
+	state.EnterGroup(99)
+	assert.Nil(t, state.CurrentGroupRange(ranges))
+}
+
+func TestFindGroupContaining(t *testing.T) {
+	ranges := []scenario.GroupRange{
+		{Start: 1, End: 3, Name: "group-1", TopIndex: 1},
+		{Start: 4, End: 7, Name: "group-2", TopIndex: 3},
+	}
+
+	assert.Equal(t, -1, FindGroupContaining(ranges, 0))  // before first group
+	assert.Equal(t, 0, FindGroupContaining(ranges, 1))    // start of group-1
+	assert.Equal(t, 0, FindGroupContaining(ranges, 2))    // inside group-1
+	assert.Equal(t, -1, FindGroupContaining(ranges, 3))   // between groups (End is exclusive)
+	assert.Equal(t, 1, FindGroupContaining(ranges, 4))    // start of group-2
+	assert.Equal(t, 1, FindGroupContaining(ranges, 6))    // inside group-2
+	assert.Equal(t, -1, FindGroupContaining(ranges, 7))   // past group-2
+	assert.Equal(t, -1, FindGroupContaining(nil, 0))      // no groups
+}
+
+func TestState_GroupAllMaxesHit(t *testing.T) {
+	gr := scenario.GroupRange{Start: 1, End: 3, Name: "test-group"}
+	steps := []scenario.Step{
+		{}, // index 0 - outside group
+		{Calls: &scenario.CallBounds{Min: 1, Max: 2}}, // index 1
+		{Calls: &scenario.CallBounds{Min: 1, Max: 3}}, // index 2
+	}
+
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+
+	// Not all maxes hit
+	state.StepCounts = []int{0, 1, 2}
+	assert.False(t, state.GroupAllMaxesHit(gr, steps))
+
+	// All maxes hit
+	state.StepCounts = []int{0, 2, 3}
+	assert.True(t, state.GroupAllMaxesHit(gr, steps))
+
+	// Over max
+	state.StepCounts = []int{0, 5, 5}
+	assert.True(t, state.GroupAllMaxesHit(gr, steps))
+}
+
+func TestState_GroupAllMinsMet(t *testing.T) {
+	gr := scenario.GroupRange{Start: 0, End: 2, Name: "test-group"}
+	steps := []scenario.Step{
+		{Calls: &scenario.CallBounds{Min: 2, Max: 5}}, // index 0
+		{Calls: &scenario.CallBounds{Min: 0, Max: 3}}, // index 1 (optional)
+	}
+
+	state := NewState("/path/to/scenario.yaml", "hash", 2)
+
+	// Not met
+	state.StepCounts = []int{1, 0}
+	assert.False(t, state.GroupAllMinsMet(gr, steps))
+
+	// Met (optional step doesn't need to be called)
+	state.StepCounts = []int{2, 0}
+	assert.True(t, state.GroupAllMinsMet(gr, steps))
+
+	// Over min
+	state.StepCounts = []int{5, 2}
+	assert.True(t, state.GroupAllMinsMet(gr, steps))
 }

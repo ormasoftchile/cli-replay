@@ -60,7 +60,7 @@ func New(metadata SessionMetadata, filters []string, plat platform.Platform) (*R
 		return nil, fmt.Errorf("invalid metadata: %w", err)
 	}
 
-	// Create temporary directory for shims
+	// Create temporary directory for recording shims
 	shimDir, err := os.MkdirTemp("", "cli-replay-shims-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create shim directory: %w", err)

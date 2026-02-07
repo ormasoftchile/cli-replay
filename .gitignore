@@ -46,5 +46,8 @@ dist/
 # Demo temp files
 .demo-tmp/
 
+# cli-replay runtime data (state files, intercept dirs)
+.cli-replay/
+
 # Logs
 *.log

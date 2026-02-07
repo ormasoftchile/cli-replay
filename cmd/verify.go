@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
 	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/internal/verify"
 	"github.com/spf13/cobra"
 )
+
+var verifyFormatFlag string
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify [scenario.yaml]",
@@ -20,18 +25,35 @@ variable (which was set automatically by 'cli-replay run | Invoke-Expression').
 
 Exit code 0 if all steps are consumed, 1 if steps remain or state is missing.
 
+Formats:
+  text   Human-readable output to stderr (default)
+  json   Compact JSON to stdout (pipe to jq for formatting)
+  junit  JUnit XML to stdout (for CI test report ingestion)
+
 Examples:
-  cli-replay verify                 # uses CLI_REPLAY_SCENARIO from env
-  cli-replay verify scenario.yaml   # explicit path`,
+  cli-replay verify                              # uses CLI_REPLAY_SCENARIO from env
+  cli-replay verify scenario.yaml                # explicit path
+  cli-replay verify scenario.yaml --format json  # JSON output to stdout
+  cli-replay verify scenario.yaml --format junit # JUnit XML to stdout`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runVerify,
 }
 
 func init() { //nolint:gochecknoinits // Standard cobra pattern
+	verifyCmd.Flags().StringVar(&verifyFormatFlag, "format", "text", "Output format: text, json, or junit")
 	rootCmd.AddCommand(verifyCmd)
 }
 
 func runVerify(_ *cobra.Command, args []string) error {
+	// Validate format flag
+	format := strings.ToLower(verifyFormatFlag)
+	switch format {
+	case "text", "json", "junit":
+		// valid
+	default:
+		return fmt.Errorf("invalid format %q: valid values are text, json, junit", verifyFormatFlag)
+	}
+
 	var scenarioPath string
 	if len(args) > 0 {
 		scenarioPath = args[0]
@@ -53,11 +75,25 @@ func runVerify(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load scenario: %w", err)
 	}
 
+	// Determine session
+	session := os.Getenv("CLI_REPLAY_SESSION")
+	if session == "" {
+		session = "default"
+	}
+
 	// Load state
 	stateFile := runner.StateFilePath(absPath)
 	state, err := runner.ReadState(stateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Build error result
+			result := verify.BuildErrorResult(scn.Meta.Name, session, "no state found")
+			if format != "text" {
+				if fmtErr := outputVerifyResult(result, format, scenarioPath, time.Time{}); fmtErr != nil {
+					return fmtErr
+				}
+				os.Exit(1)
+			}
 			fmt.Fprintf(os.Stderr, "cli-replay: no state found for %q\n", scn.Meta.Name)
 			fmt.Fprintf(os.Stderr, "  run 'cli-replay run %s' first\n", scenarioPath)
 			os.Exit(1)
@@ -65,28 +101,51 @@ func runVerify(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to read state: %w", err)
 	}
 
-	// Check completion: AllStepsMetMin covers both simple (min=1 default) and bounded cases.
-	hasCallBounds := hasAnyCallBounds(scn.Steps)
-	allMetMin := state.AllStepsMetMin(scn.Steps)
+	// Build structured result
+	result := verify.BuildResult(scn.Meta.Name, session, scn.FlatSteps(), state, scn.GroupRanges())
 
-	if allMetMin {
-		consumed := countConsumedSteps(state)
+	// Dispatch based on format
+	if format != "text" {
+		if err := outputVerifyResult(result, format, scenarioPath, state.LastUpdated); err != nil {
+			return err
+		}
+		if !result.Passed {
+			os.Exit(1)
+		}
+		return nil
+	}
+
+	// Text output (legacy behavior)
+	hasCallBounds := hasAnyCallBounds(scn.FlatSteps())
+
+	if result.Passed {
 		fmt.Fprintf(os.Stderr, "✓ Scenario %q completed: %d/%d steps consumed\n",
-			scn.Meta.Name, consumed, state.TotalSteps)
+			scn.Meta.Name, result.ConsumedSteps, result.TotalSteps)
 		if hasCallBounds {
-			printPerStepCounts(scn.Steps, state)
+			printPerStepCounts(scn.FlatSteps(), state)
 		}
 		return nil
 	}
 
 	// Incomplete — show per-step detail
-	consumed := countConsumedSteps(state)
 	fmt.Fprintf(os.Stderr, "✗ Scenario %q incomplete\n", scn.Meta.Name)
-	fmt.Fprintf(os.Stderr, "  consumed: %d/%d steps\n", consumed, state.TotalSteps)
-	printPerStepCounts(scn.Steps, state)
+	fmt.Fprintf(os.Stderr, "  consumed: %d/%d steps\n", result.ConsumedSteps, result.TotalSteps)
+	printPerStepCounts(scn.FlatSteps(), state)
 	os.Exit(1)
 
 	return nil // unreachable but satisfies compiler
+}
+
+// outputVerifyResult writes the structured result to stdout in the given format.
+func outputVerifyResult(result *verify.VerifyResult, format, scenarioFile string, timestamp time.Time) error {
+	switch format {
+	case "json":
+		return verify.FormatJSON(os.Stdout, result)
+	case "junit":
+		return verify.FormatJUnit(os.Stdout, result, scenarioFile, timestamp)
+	default:
+		return fmt.Errorf("unsupported format: %s", format)
+	}
 }
 
 // hasAnyCallBounds returns true if any step has explicit call bounds.

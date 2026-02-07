@@ -84,9 +84,9 @@ func TestRecordCommand_SingleCommand(t *testing.T) {
 
 	// Verify scenario structure
 	require.Len(t, sc.Steps, 1, "should have exactly one step")
-	assert.Contains(t, sc.Steps[0].Respond.Stdout, "hello world")
-	assert.Equal(t, 0, sc.Steps[0].Respond.Exit)
-	assert.Empty(t, sc.Steps[0].Respond.Stderr)
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stdout, "hello world")
+	assert.Equal(t, 0, sc.Steps[0].Step.Respond.Exit)
+	assert.Empty(t, sc.Steps[0].Step.Respond.Stderr)
 
 	// Verify metadata has a name (auto-generated if not specified)
 	assert.NotEmpty(t, sc.Meta.Name)
@@ -116,7 +116,7 @@ func TestRecordCommand_WithMetadata(t *testing.T) {
 	assert.Equal(t, "my-test", sc.Meta.Name)
 	assert.Equal(t, "Test scenario", sc.Meta.Description)
 	require.Len(t, sc.Steps, 1)
-	assert.Contains(t, sc.Steps[0].Respond.Stdout, "test")
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stdout, "test")
 }
 
 func TestRecordCommand_NonZeroExit(t *testing.T) {
@@ -142,7 +142,7 @@ func TestRecordCommand_NonZeroExit(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, sc.Steps, 1)
-	assert.Equal(t, 42, sc.Steps[0].Respond.Exit)
+	assert.Equal(t, 42, sc.Steps[0].Step.Respond.Exit)
 }
 
 func TestRecordCommand_StderrCapture(t *testing.T) {
@@ -171,8 +171,8 @@ func TestRecordCommand_StderrCapture(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, sc.Steps, 1)
-	assert.Equal(t, 1, sc.Steps[0].Respond.Exit)
-	assert.Contains(t, sc.Steps[0].Respond.Stderr, "errout")
+	assert.Equal(t, 1, sc.Steps[0].Step.Respond.Exit)
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stderr, "errout")
 }
 
 func TestRecordCommand_MissingOutputFlag(t *testing.T) {
@@ -255,9 +255,9 @@ func TestRecordCommand_EmptyOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, sc.Steps, 1)
-	assert.Equal(t, 0, sc.Steps[0].Respond.Exit)
-	assert.Empty(t, sc.Steps[0].Respond.Stdout)
-	assert.Empty(t, sc.Steps[0].Respond.Stderr)
+	assert.Equal(t, 0, sc.Steps[0].Step.Respond.Exit)
+	assert.Empty(t, sc.Steps[0].Step.Respond.Stdout)
+	assert.Empty(t, sc.Steps[0].Step.Respond.Stderr)
 }
 
 // --- User Story 2: Multi-Step Workflow ---
@@ -290,9 +290,9 @@ func TestRecordCommand_MultiStepWorkflow(t *testing.T) {
 
 	// In direct capture, the entire bash script is one step
 	require.Len(t, sc.Steps, 1)
-	assert.Contains(t, sc.Steps[0].Respond.Stdout, "step1")
-	assert.Contains(t, sc.Steps[0].Respond.Stdout, "step2")
-	assert.Contains(t, sc.Steps[0].Respond.Stdout, "step3")
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stdout, "step1")
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stdout, "step2")
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stdout, "step3")
 }
 
 func TestRecordCommand_MultiCommandBashC(t *testing.T) {
@@ -317,8 +317,8 @@ func TestRecordCommand_MultiCommandBashC(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, sc.Steps, 1)
-	assert.Equal(t, "first\nsecond\nthird\n", sc.Steps[0].Respond.Stdout)
-	assert.Equal(t, 0, sc.Steps[0].Respond.Exit)
+	assert.Equal(t, "first\nsecond\nthird\n", sc.Steps[0].Step.Respond.Stdout)
+	assert.Equal(t, 0, sc.Steps[0].Step.Respond.Exit)
 }
 
 // TestRecordCommand_ShimBasedRecording tests the shim interception path
@@ -364,8 +364,8 @@ func TestRecordCommand_ShimBasedRecording(t *testing.T) {
 	require.GreaterOrEqual(t, len(sc.Steps), 1, "at least one command should be captured via shim")
 
 	// The captured command should have 'cat' in its argv
-	assert.Equal(t, "cat", sc.Steps[0].Match.Argv[0])
-	assert.Contains(t, sc.Steps[0].Respond.Stdout, "captured-via-shim")
+	assert.Equal(t, "cat", sc.Steps[0].Step.Match.Argv[0])
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stdout, "captured-via-shim")
 }
 
 // TestRecordCommand_ShimMultipleCommands tests shim-based recording with
@@ -408,13 +408,13 @@ func TestRecordCommand_ShimMultipleCommands(t *testing.T) {
 	// Each cat call should be captured as a separate step
 	require.Len(t, sc.Steps, 3, "should capture 3 separate cat commands via shims")
 
-	assert.Contains(t, sc.Steps[0].Respond.Stdout, "first")
-	assert.Contains(t, sc.Steps[1].Respond.Stdout, "second")
-	assert.Contains(t, sc.Steps[2].Respond.Stdout, "third")
+	assert.Contains(t, sc.Steps[0].Step.Respond.Stdout, "first")
+	assert.Contains(t, sc.Steps[1].Step.Respond.Stdout, "second")
+	assert.Contains(t, sc.Steps[2].Step.Respond.Stdout, "third")
 
 	// All should be cat commands
 	for i, step := range sc.Steps {
-		assert.Equal(t, "cat", step.Match.Argv[0], "step %d should be cat", i)
+		assert.Equal(t, "cat", step.Step.Match.Argv[0], "step %d should be cat", i)
 	}
 }
 
@@ -456,7 +456,7 @@ func TestRecordCommand_ShimPreservesExitCodes(t *testing.T) {
 	// Should have 2 cat steps
 	require.Len(t, sc.Steps, 2)
 	for _, step := range sc.Steps {
-		assert.Equal(t, 0, step.Respond.Exit)
+		assert.Equal(t, 0, step.Step.Respond.Exit)
 	}
 }
 

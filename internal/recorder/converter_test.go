@@ -45,15 +45,15 @@ func TestConvertToScenario(t *testing.T) {
 	require.Len(t, scenario.Steps, 2)
 
 	// Step 1
-	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[0].Match.Argv)
-	assert.Equal(t, "NAME    READY   STATUS\npod1    1/1     Running\n", scenario.Steps[0].Respond.Stdout)
-	assert.Empty(t, scenario.Steps[0].Respond.Stderr)
-	assert.Equal(t, 0, scenario.Steps[0].Respond.Exit)
+	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[0].Step.Match.Argv)
+	assert.Equal(t, "NAME    READY   STATUS\npod1    1/1     Running\n", scenario.Steps[0].Step.Respond.Stdout)
+	assert.Empty(t, scenario.Steps[0].Step.Respond.Stderr)
+	assert.Equal(t, 0, scenario.Steps[0].Step.Respond.Exit)
 
 	// Step 2
-	assert.Equal(t, []string{"kubectl", "describe", "pod", "pod1"}, scenario.Steps[1].Match.Argv)
-	assert.Equal(t, "Name: pod1\nNamespace: default\n", scenario.Steps[1].Respond.Stdout)
-	assert.Equal(t, 0, scenario.Steps[1].Respond.Exit)
+	assert.Equal(t, []string{"kubectl", "describe", "pod", "pod1"}, scenario.Steps[1].Step.Match.Argv)
+	assert.Equal(t, "Name: pod1\nNamespace: default\n", scenario.Steps[1].Step.Respond.Stdout)
+	assert.Equal(t, 0, scenario.Steps[1].Step.Respond.Exit)
 }
 
 func TestConvertToScenario_DuplicateCommands(t *testing.T) {
@@ -95,14 +95,14 @@ func TestConvertToScenario_DuplicateCommands(t *testing.T) {
 	require.Len(t, scenario.Steps, 3)
 
 	// All should have same argv (duplicate commands allowed)
-	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[0].Match.Argv)
-	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[1].Match.Argv)
-	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[2].Match.Argv)
+	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[0].Step.Match.Argv)
+	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[1].Step.Match.Argv)
+	assert.Equal(t, []string{"kubectl", "get", "pods"}, scenario.Steps[2].Step.Match.Argv)
 
 	// Verify outputs are different
-	assert.Equal(t, "No pods\n", scenario.Steps[0].Respond.Stdout)
-	assert.Equal(t, "pod1\n", scenario.Steps[1].Respond.Stdout)
-	assert.Equal(t, "pod1\npod2\n", scenario.Steps[2].Respond.Stdout)
+	assert.Equal(t, "No pods\n", scenario.Steps[0].Step.Respond.Stdout)
+	assert.Equal(t, "pod1\n", scenario.Steps[1].Step.Respond.Stdout)
+	assert.Equal(t, "pod1\npod2\n", scenario.Steps[2].Step.Respond.Stdout)
 }
 
 func TestConvertToScenario_NonZeroExitCode(t *testing.T) {
@@ -126,9 +126,9 @@ func TestConvertToScenario_NonZeroExitCode(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, scenario.Steps, 1)
-	assert.Equal(t, 1, scenario.Steps[0].Respond.Exit)
-	assert.Equal(t, "Error from server (NotFound): pods \"nonexistent\" not found\n", scenario.Steps[0].Respond.Stderr)
-	assert.Empty(t, scenario.Steps[0].Respond.Stdout)
+	assert.Equal(t, 1, scenario.Steps[0].Step.Respond.Exit)
+	assert.Equal(t, "Error from server (NotFound): pods \"nonexistent\" not found\n", scenario.Steps[0].Step.Respond.Stderr)
+	assert.Empty(t, scenario.Steps[0].Step.Respond.Stdout)
 }
 
 func TestConvertToScenario_EmptyCommands(t *testing.T) {
@@ -151,8 +151,8 @@ func TestGenerateYAML(t *testing.T) {
 			Name:        "test-scenario",
 			Description: "A test scenario",
 		},
-		Steps: []scenario.Step{
-			{
+		Steps: []scenario.StepElement{
+			{Step: &scenario.Step{
 				Match: scenario.Match{
 					Argv: []string{"kubectl", "get", "pods"},
 				},
@@ -161,7 +161,7 @@ func TestGenerateYAML(t *testing.T) {
 					Stdout: "NAME    READY\npod1    1/1     Running\n",
 					Stderr: "",
 				},
-			},
+			}},
 		},
 	}
 
@@ -186,8 +186,8 @@ func TestWriteYAMLFile(t *testing.T) {
 			Name:        "file-test",
 			Description: "Test file writing",
 		},
-		Steps: []scenario.Step{
-			{
+		Steps: []scenario.StepElement{
+			{Step: &scenario.Step{
 				Match: scenario.Match{
 					Argv: []string{"echo", "hello"},
 				},
@@ -196,7 +196,7 @@ func TestWriteYAMLFile(t *testing.T) {
 					Stdout: "hello\n",
 					Stderr: "",
 				},
-			},
+			}},
 		},
 	}
 
@@ -257,10 +257,10 @@ func TestConvertToScenario_WithStdin(t *testing.T) {
 	require.Len(t, sc.Steps, 2)
 
 	// Step 1 should have stdin populated
-	assert.Equal(t, "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod\n", sc.Steps[0].Match.Stdin)
+	assert.Equal(t, "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod\n", sc.Steps[0].Step.Match.Stdin)
 
 	// Step 2 should have empty stdin (omitted)
-	assert.Empty(t, sc.Steps[1].Match.Stdin)
+	assert.Empty(t, sc.Steps[1].Step.Match.Stdin)
 }
 
 func TestConvertToScenario_StdinAppearsInYAML(t *testing.T) {

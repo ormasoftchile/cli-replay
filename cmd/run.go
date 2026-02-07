@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,8 +80,8 @@ func runRun(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to locate cli-replay binary: %w", err)
 	}
 
-	// Create intercept directory
-	interceptDir, err := os.MkdirTemp("", "cli-replay-intercept-")
+	// Create intercept directory inside .cli-replay/ next to scenario
+	interceptDir, err := runner.InterceptDirPath(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to create intercept directory: %w", err)
 	}
@@ -100,7 +101,7 @@ func runRun(_ *cobra.Command, args []string) error {
 	// Initialize state (resets to step 0) and store intercept dir
 	// Use session-aware state path so parallel runs don't collide
 	stateFile := runner.StateFilePathWithSession(absPath, sessionID)
-	state := runner.NewState(absPath, scenarioHash, len(scn.Steps))
+	state := runner.NewState(absPath, scenarioHash, len(scn.FlatSteps()))
 	state.InterceptDir = interceptDir
 	if err := runner.WriteState(stateFile, state); err != nil {
 		_ = os.RemoveAll(interceptDir)
@@ -109,7 +110,7 @@ func runRun(_ *cobra.Command, args []string) error {
 
 	// Status to stderr (not piped to Invoke-Expression / eval)
 	fmt.Fprintf(os.Stderr, "cli-replay: session initialized for %q (%d steps, %d commands)\n",
-		scn.Meta.Name, len(scn.Steps), len(commands))
+		scn.Meta.Name, len(scn.FlatSteps()), len(commands))
 	fmt.Fprintf(os.Stderr, "  intercept dir: %s\n", interceptDir)
 	fmt.Fprintf(os.Stderr, "  commands: %s\n", strings.Join(commands, ", "))
 
@@ -125,7 +126,7 @@ func runRun(_ *cobra.Command, args []string) error {
 func extractCommands(scn *scenario.Scenario) []string {
 	seen := make(map[string]bool)
 	var cmds []string
-	for _, step := range scn.Steps {
+	for _, step := range scn.FlatSteps() {
 		if len(step.Match.Argv) == 0 {
 			continue
 		}
@@ -189,20 +190,30 @@ func detectShell(explicit string) string {
 
 // emitShellSetup writes shell-specific commands to stdout that set
 // CLI_REPLAY_SESSION, CLI_REPLAY_SCENARIO, and prepend the intercept directory to PATH.
+// For bash/zsh/sh, also emits a cleanup trap function and trap statement.
 func emitShellSetup(shell, interceptDir, scenarioPath, sessionID string) {
+	writeShellSetup(os.Stdout, shell, interceptDir, scenarioPath, sessionID)
+}
+
+// writeShellSetup writes shell-specific setup commands to the given writer.
+// Separated from emitShellSetup for testability.
+func writeShellSetup(w io.Writer, shell, interceptDir, scenarioPath, sessionID string) {
 	switch shell {
 	case "powershell":
-		fmt.Printf("$env:CLI_REPLAY_SESSION = '%s'\n", sessionID)
-		fmt.Printf("$env:CLI_REPLAY_SCENARIO = '%s'\n", strings.ReplaceAll(scenarioPath, "'", "''"))
-		fmt.Printf("$env:PATH = '%s' + ';' + $env:PATH\n", strings.ReplaceAll(interceptDir, "'", "''"))
+		fmt.Fprintf(w, "$env:CLI_REPLAY_SESSION = '%s'\n", sessionID)
+		fmt.Fprintf(w, "$env:CLI_REPLAY_SCENARIO = '%s'\n", strings.ReplaceAll(scenarioPath, "'", "''"))
+		fmt.Fprintf(w, "$env:PATH = '%s' + ';' + $env:PATH\n", strings.ReplaceAll(interceptDir, "'", "''"))
 	case "cmd":
-		fmt.Printf("set \"CLI_REPLAY_SESSION=%s\"\n", sessionID)
-		fmt.Printf("set \"CLI_REPLAY_SCENARIO=%s\"\n", scenarioPath)
-		fmt.Printf("set \"PATH=%s;%%PATH%%\"\n", interceptDir)
+		fmt.Fprintf(w, "set \"CLI_REPLAY_SESSION=%s\"\n", sessionID)
+		fmt.Fprintf(w, "set \"CLI_REPLAY_SCENARIO=%s\"\n", scenarioPath)
+		fmt.Fprintf(w, "set \"PATH=%s;%%PATH%%\"\n", interceptDir)
 	default: // bash / zsh / sh
-		fmt.Printf("export CLI_REPLAY_SESSION='%s'\n", sessionID)
-		fmt.Printf("export CLI_REPLAY_SCENARIO='%s'\n", strings.ReplaceAll(scenarioPath, "'", "'\\''"))
-		fmt.Printf("export PATH='%s':\"$PATH\"\n", strings.ReplaceAll(interceptDir, "'", "'\\''"))
+		fmt.Fprintf(w, "export CLI_REPLAY_SESSION='%s'\n", sessionID)
+		fmt.Fprintf(w, "export CLI_REPLAY_SCENARIO='%s'\n", strings.ReplaceAll(scenarioPath, "'", "'\\''"))
+		fmt.Fprintf(w, "export PATH='%s':\"$PATH\"\n", strings.ReplaceAll(interceptDir, "'", "'\\''"))
+		// Cleanup trap: auto-clean on exit or signal (FR-015, FR-016, FR-017)
+		fmt.Fprintf(w, "_cli_replay_clean() { if [ -n \"${_cli_replay_cleaned:-}\" ]; then return; fi; _cli_replay_cleaned=1; command cli-replay clean \"$CLI_REPLAY_SCENARIO\" 2>/dev/null; }\n")
+		fmt.Fprintf(w, "trap '_cli_replay_clean' EXIT INT TERM\n")
 	}
 }
 
@@ -301,7 +312,7 @@ func validateAllowlist(scn *scenario.Scenario, yamlList, cliList []string) error
 		}
 	}
 
-	for i, step := range scn.Steps {
+	for i, step := range scn.FlatSteps() {
 		if len(step.Match.Argv) == 0 {
 			continue
 		}

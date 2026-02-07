@@ -21,8 +21,80 @@ type State struct {
 	TotalSteps    int       `json:"total_steps"`
 	StepCounts    []int     `json:"step_counts,omitempty"`
 	ConsumedSteps []bool    `json:"consumed_steps,omitempty"` // deprecated: read-only migration
+	ActiveGroup   *int      `json:"active_group,omitempty"`
 	InterceptDir  string    `json:"intercept_dir,omitempty"`
 	LastUpdated   time.Time `json:"last_updated"`
+}
+
+// IsInGroup returns true if the state is currently inside a step group.
+func (s *State) IsInGroup() bool {
+	return s.ActiveGroup != nil
+}
+
+// CurrentGroupRange returns the GroupRange for the currently active group.
+// Returns nil if the state is not inside a group.
+func (s *State) CurrentGroupRange(ranges []scenario.GroupRange) *scenario.GroupRange {
+	if s.ActiveGroup == nil {
+		return nil
+	}
+	idx := *s.ActiveGroup
+	if idx < 0 || idx >= len(ranges) {
+		return nil
+	}
+	return &ranges[idx]
+}
+
+// EnterGroup sets the active group index.
+func (s *State) EnterGroup(groupIdx int) {
+	s.ActiveGroup = &groupIdx
+	s.LastUpdated = time.Now().UTC()
+}
+
+// ExitGroup clears the active group, indicating the state has left a group.
+func (s *State) ExitGroup() {
+	s.ActiveGroup = nil
+	s.LastUpdated = time.Now().UTC()
+}
+
+// FindGroupContaining returns the index into groupRanges that contains the
+// given flat step index, or -1 if the index is not inside any group.
+func FindGroupContaining(ranges []scenario.GroupRange, flatIdx int) int {
+	for i, gr := range ranges {
+		if flatIdx >= gr.Start && flatIdx < gr.End {
+			return i
+		}
+	}
+	return -1
+}
+
+// GroupAllMaxesHit returns true if every step in the given group range has
+// reached its maximum call count.
+func (s *State) GroupAllMaxesHit(gr scenario.GroupRange, steps []scenario.Step) bool {
+	for i := gr.Start; i < gr.End; i++ {
+		if i >= len(steps) || i >= len(s.StepCounts) {
+			return false
+		}
+		bounds := steps[i].EffectiveCalls()
+		if s.StepCounts[i] < bounds.Max {
+			return false
+		}
+	}
+	return true
+}
+
+// GroupAllMinsmet returns true if every step in the given group range has
+// met its minimum call count.
+func (s *State) GroupAllMinsMet(gr scenario.GroupRange, steps []scenario.Step) bool {
+	for i := gr.Start; i < gr.End; i++ {
+		if i >= len(steps) || i >= len(s.StepCounts) {
+			return false
+		}
+		bounds := steps[i].EffectiveCalls()
+		if s.StepCounts[i] < bounds.Min {
+			return false
+		}
+	}
+	return true
 }
 
 // Advance increments the current step counter and marks the step as consumed.
@@ -131,9 +203,15 @@ func (s *State) RemainingSteps() int {
 	return remaining
 }
 
+// cliReplayDir returns the .cli-replay/ directory for a given scenario path.
+// The directory is created adjacent to the scenario file.
+func cliReplayDir(scenarioPath string) string {
+	return filepath.Join(filepath.Dir(scenarioPath), ".cli-replay")
+}
+
 // StateFilePath returns the path to the state file for a given scenario path.
-// The state file is stored in the system temp directory with a hash of the
-// scenario path to ensure uniqueness.
+// The state file is stored in .cli-replay/ next to the scenario file, with a
+// hash of the scenario path to ensure uniqueness.
 // If CLI_REPLAY_SESSION is set, it is included in the hash to allow parallel sessions.
 func StateFilePath(scenarioPath string) string {
 	return StateFilePathWithSession(scenarioPath, os.Getenv("CLI_REPLAY_SESSION"))
@@ -149,7 +227,18 @@ func StateFilePathWithSession(scenarioPath, session string) string {
 	}
 	hash := sha256.Sum256([]byte(key))
 	hashStr := hex.EncodeToString(hash[:])[:16]
-	return filepath.Join(os.TempDir(), fmt.Sprintf("cli-replay-%s.state", hashStr))
+	dir := cliReplayDir(scenarioPath)
+	return filepath.Join(dir, fmt.Sprintf("cli-replay-%s.state", hashStr))
+}
+
+// InterceptDirPath creates an intercept directory inside .cli-replay/ next to
+// the scenario file. Returns the path to the created directory.
+func InterceptDirPath(scenarioPath string) (string, error) {
+	dir := cliReplayDir(scenarioPath)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return "", fmt.Errorf("failed to create .cli-replay directory: %w", err)
+	}
+	return os.MkdirTemp(dir, "intercept-")
 }
 
 // ReadState loads the state from the given file path.

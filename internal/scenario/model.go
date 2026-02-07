@@ -11,8 +11,8 @@ import (
 
 // Scenario represents a complete test definition loaded from a YAML file.
 type Scenario struct {
-	Meta  Meta   `yaml:"meta"`
-	Steps []Step `yaml:"steps"`
+	Meta  Meta          `yaml:"meta"`
+	Steps []StepElement `yaml:"steps"`
 }
 
 // Validate checks that the scenario is valid.
@@ -23,8 +23,118 @@ func (s *Scenario) Validate() error {
 	if len(s.Steps) == 0 {
 		return errors.New("steps must contain at least one step")
 	}
-	for i, step := range s.Steps {
-		if err := step.Validate(); err != nil {
+	groupIdx := 0
+	for i, elem := range s.Steps {
+		if err := elem.Validate(); err != nil {
+			return fmt.Errorf("step %d: %w", i, err)
+		}
+		// Auto-name groups
+		if elem.Group != nil && elem.Group.Name == "" {
+			groupIdx++
+			s.Steps[i].Group.Name = fmt.Sprintf("group-%d", groupIdx)
+		} else if elem.Group != nil {
+			groupIdx++
+		}
+	}
+	return nil
+}
+
+// FlatSteps returns all leaf steps expanded inline. Groups are replaced by
+// their child steps in order. The result preserves contiguous flat indices.
+func (s *Scenario) FlatSteps() []Step {
+	var flat []Step
+	for _, elem := range s.Steps {
+		if elem.Step != nil {
+			flat = append(flat, *elem.Step)
+		} else if elem.Group != nil {
+			for _, child := range elem.Group.Steps {
+				if child.Step != nil {
+					flat = append(flat, *child.Step)
+				}
+			}
+		}
+	}
+	return flat
+}
+
+// GroupRange describes the flat-index extent of a single step group.
+type GroupRange struct {
+	Start    int    // Inclusive flat index of first group child
+	End      int    // Exclusive flat index (Start + len(group.Steps))
+	Name     string // Group name (resolved, never empty)
+	TopIndex int    // Index of the group in the top-level Steps array
+}
+
+// GroupRanges returns the flat-index ranges for all groups in the scenario.
+func (s *Scenario) GroupRanges() []GroupRange {
+	var ranges []GroupRange
+	flatIdx := 0
+	for i, elem := range s.Steps {
+		if elem.Step != nil {
+			flatIdx++
+		} else if elem.Group != nil {
+			childCount := 0
+			for _, child := range elem.Group.Steps {
+				if child.Step != nil {
+					childCount++
+				}
+			}
+			ranges = append(ranges, GroupRange{
+				Start:    flatIdx,
+				End:      flatIdx + childCount,
+				Name:     elem.Group.Name,
+				TopIndex: i,
+			})
+			flatIdx += childCount
+		}
+	}
+	return ranges
+}
+
+// StepElement is a union type — exactly one of Step or Group is non-nil.
+// It represents either a leaf step or a group container in the steps array.
+type StepElement struct {
+	Step  *Step      `yaml:"-"` // Set when YAML has match/respond (leaf step)
+	Group *StepGroup `yaml:"-"` // Set when YAML has group key
+}
+
+// Validate checks that exactly one of Step or Group is set and validates it.
+func (se *StepElement) Validate() error {
+	if se.Step == nil && se.Group == nil {
+		return errors.New("step element must have either a step or a group")
+	}
+	if se.Step != nil && se.Group != nil {
+		return errors.New("step element must have either a step or a group, not both")
+	}
+	if se.Step != nil {
+		return se.Step.Validate()
+	}
+	return se.Group.Validate()
+}
+
+// StepGroup defines a group of steps with unordered matching semantics.
+type StepGroup struct {
+	Mode  string        `yaml:"mode"`
+	Name  string        `yaml:"name,omitempty"`
+	Steps []StepElement `yaml:"steps"`
+}
+
+// Validate checks that the step group is valid.
+func (sg *StepGroup) Validate() error {
+	if sg.Mode != "unordered" {
+		return fmt.Errorf("unsupported group mode %q: only \"unordered\" is supported", sg.Mode)
+	}
+	if len(sg.Steps) == 0 {
+		return errors.New("group must contain at least one step")
+	}
+	for i, elem := range sg.Steps {
+		if elem.Group != nil {
+			return fmt.Errorf("step %d: nested groups are not allowed", i)
+		}
+		if elem.Step == nil {
+			return fmt.Errorf("step %d: group children must be leaf steps", i)
+		}
+		if err := elem.Step.Validate(); err != nil {
 			return fmt.Errorf("step %d: %w", i, err)
 		}
 	}
