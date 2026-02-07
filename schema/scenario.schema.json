@@ -1,0 +1,254 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json",
+  "title": "cli-replay Scenario",
+  "description": "Schema for cli-replay scenario YAML files. Defines the structure for recording and replaying CLI command interactions.",
+  "type": "object",
+  "required": ["meta", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "$ref": "#/definitions/meta"
+    },
+    "steps": {
+      "type": "array",
+      "description": "Ordered list of command-response steps and optional step groups.",
+      "markdownDescription": "Ordered list of command-response steps and optional step groups.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/step_element"
+      }
+    }
+  },
+  "definitions": {
+    "meta": {
+      "type": "object",
+      "description": "Scenario metadata including identification and template variables.",
+      "markdownDescription": "Scenario metadata including identification and template variables.",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Scenario name. Must be non-empty.",
+          "markdownDescription": "Scenario name. Must be non-empty."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the scenario.",
+          "markdownDescription": "Human-readable description of the scenario."
+        },
+        "vars": {
+          "type": "object",
+          "description": "Template variables for dynamic content substitution in stdout/stderr fields.",
+          "markdownDescription": "Template variables for dynamic content substitution in `stdout`/`stderr` fields. Use `{{.vars.key}}` syntax in response fields.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "security": {
+          "$ref": "#/definitions/security"
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "description": "Security constraints on which commands may be intercepted.",
+      "markdownDescription": "Security constraints on which commands may be intercepted.",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_commands": {
+          "type": "array",
+          "description": "Allowlist of command names that may be intercepted. When set, only these commands will have shims created.",
+          "markdownDescription": "Allowlist of command names that may be intercepted. When set, only these commands will have shims created.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "step_element": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/step",
+          "description": "A leaf step with match criteria and response."
+        },
+        {
+          "$ref": "#/definitions/group_wrapper",
+          "description": "A group of steps with unordered matching."
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "description": "A single command-response pair. Matches an incoming CLI command and returns a canned response.",
+      "markdownDescription": "A single command-response pair. Matches an incoming CLI command and returns a canned response.",
+      "required": ["match", "respond"],
+      "additionalProperties": false,
+      "properties": {
+        "match": {
+          "$ref": "#/definitions/match"
+        },
+        "respond": {
+          "$ref": "#/definitions/respond"
+        },
+        "calls": {
+          "$ref": "#/definitions/calls"
+        },
+        "when": {
+          "type": "string",
+          "description": "Conditional expression. Step is only eligible when this evaluates to true.",
+          "markdownDescription": "Conditional expression. Step is only eligible when this evaluates to `true`."
+        }
+      }
+    },
+    "match": {
+      "type": "object",
+      "description": "Criteria for identifying an incoming CLI command.",
+      "markdownDescription": "Criteria for identifying an incoming CLI command.",
+      "required": ["argv"],
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "type": "array",
+          "description": "Command and arguments to match. First element is the command name, rest are arguments. Supports glob patterns.",
+          "markdownDescription": "Command and arguments to match. First element is the command name, rest are arguments. Supports glob patterns (e.g., `*`, `**`).",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "stdin": {
+          "type": "string",
+          "description": "Expected stdin content. When set, the step only matches if stdin matches this value.",
+          "markdownDescription": "Expected stdin content. When set, the step only matches if stdin matches this value."
+        }
+      }
+    },
+    "respond": {
+      "type": "object",
+      "description": "Response to return when the step is matched.",
+      "markdownDescription": "Response to return when the step is matched.",
+      "additionalProperties": false,
+      "properties": {
+        "exit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 0,
+          "description": "Process exit code (0-255). Defaults to 0.",
+          "markdownDescription": "Process exit code (`0`–`255`). Defaults to `0`."
+        },
+        "stdout": {
+          "type": "string",
+          "description": "Inline stdout content. Mutually exclusive with stdout_file.",
+          "markdownDescription": "Inline stdout content. Mutually exclusive with `stdout_file`."
+        },
+        "stderr": {
+          "type": "string",
+          "description": "Inline stderr content. Mutually exclusive with stderr_file.",
+          "markdownDescription": "Inline stderr content. Mutually exclusive with `stderr_file`."
+        },
+        "stdout_file": {
+          "type": "string",
+          "description": "Path to file containing stdout content. Mutually exclusive with stdout.",
+          "markdownDescription": "Path to file containing stdout content. Mutually exclusive with `stdout`."
+        },
+        "stderr_file": {
+          "type": "string",
+          "description": "Path to file containing stderr content. Mutually exclusive with stderr.",
+          "markdownDescription": "Path to file containing stderr content. Mutually exclusive with `stderr`."
+        },
+        "delay": {
+          "type": "string",
+          "description": "Response delay in Go duration format (e.g., '100ms', '1s', '2.5s').",
+          "markdownDescription": "Response delay in Go duration format (e.g., `100ms`, `1s`, `2.5s`)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["stdout"]
+          },
+          "then": {
+            "properties": {
+              "stdout_file": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["stderr"]
+          },
+          "then": {
+            "properties": {
+              "stderr_file": false
+            }
+          }
+        }
+      ]
+    },
+    "calls": {
+      "type": "object",
+      "description": "Invocation bounds for this step. Defaults to {min: 1, max: 1} when omitted.",
+      "markdownDescription": "Invocation bounds for this step. Defaults to `{min: 1, max: 1}` when omitted.",
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of times this step must be invoked. 0 means optional.",
+          "markdownDescription": "Minimum number of times this step must be invoked. `0` means optional."
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of times this step may be invoked. Must be >= 1.",
+          "markdownDescription": "Maximum number of times this step may be invoked. Must be `≥ 1`."
+        }
+      }
+    },
+    "group_wrapper": {
+      "type": "object",
+      "description": "A wrapper containing a step group with unordered matching semantics.",
+      "markdownDescription": "A wrapper containing a step group with unordered matching semantics.",
+      "required": ["group"],
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "$ref": "#/definitions/step_group"
+        }
+      }
+    },
+    "step_group": {
+      "type": "object",
+      "description": "A group of steps that can be matched in any order. All steps in the group must meet their minimum call bounds before the scenario advances past the group.",
+      "markdownDescription": "A group of steps that can be matched in any order. All steps in the group must meet their minimum call bounds before the scenario advances past the group (barrier semantics).",
+      "required": ["mode", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["unordered"],
+          "description": "Matching mode. Currently only 'unordered' is supported.",
+          "markdownDescription": "Matching mode. Currently only `unordered` is supported."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable group name for labeling. Auto-generated as 'group-N' when omitted.",
+          "markdownDescription": "Human-readable group name for labeling. Auto-generated as `group-N` (1-based) when omitted."
+        },
+        "steps": {
+          "type": "array",
+          "description": "Child steps in the group. Must contain at least one step. Nested groups are not allowed.",
+          "markdownDescription": "Child steps in the group. Must contain at least one step. Nested groups are **not** allowed.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/step"
+          }
+        }
+      }
+    }
+  }
+}

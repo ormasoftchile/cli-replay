@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+meta:
+  name: exec-mode-demo
+  description: |
+    Demonstrates the exec mode that manages the full intercept lifecycle
+    (setup → spawn → verify → cleanup) in a single command.
+    
+    Usage:
+      cli-replay exec examples/recordings/exec-mode-demo.yaml -- bash -c 'echo hello && echo goodbye'
+
+steps:
+  - match:
+      argv: [echo, hello]
+    respond:
+      exit: 0
+      stdout: "hello from cli-replay!\n"
+
+  - match:
+      argv: [echo, goodbye]
+    respond:
+      exit: 0
+      stdout: "goodbye from cli-replay!\n"

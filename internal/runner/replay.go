@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cli-replay/cli-replay/internal/matcher"
 	"github.com/cli-replay/cli-replay/internal/scenario"
@@ -144,6 +145,9 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 		return &ReplayResult{ExitCode: 1}, fmt.Errorf("failed to load scenario: %w", err)
 	}
 
+	// Flatten steps (expands groups inline) for sequential replay logic
+	flatSteps := scn.FlatSteps()
+
 	// Calculate scenario hash
 	scenarioHash := hashScenarioFile(absPath)
 
@@ -153,7 +157,7 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Initialize new state
-			state = NewState(absPath, scenarioHash, len(scn.Steps))
+			state = NewState(absPath, scenarioHash, len(flatSteps))
 		} else {
 			return &ReplayResult{ExitCode: 1}, fmt.Errorf("failed to read state: %w", err)
 		}
@@ -167,39 +171,270 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 			fmt.Errorf("scenario already complete")
 	}
 
-	// Get expected step
+	// Budget-aware step matching
+	// Skip exhausted steps (count >= max), then try matching current step.
+	// If current step doesn't match but its min is met, soft-advance to next step.
 	stepIndex := state.CurrentStep
-	if stepIndex >= len(scn.Steps) {
-		return &ReplayResult{ExitCode: 1}, fmt.Errorf("step index out of range")
-	}
-	expectedStep := &scn.Steps[stepIndex]
+	groupRanges := scn.GroupRanges()
 
-	// Match argv
-	if !matcher.ArgvMatch(expectedStep.Match.Argv, argv) {
-		result := &ReplayResult{
-			ExitCode:     1,
-			Matched:      false,
-			StepIndex:    stepIndex,
-			ScenarioName: scn.Meta.Name,
+	// Phase 1: Skip exhausted steps (respects groups — skips entire group if all maxes hit)
+	for stepIndex < len(flatSteps) {
+		grIdx := FindGroupContaining(groupRanges, stepIndex)
+		if grIdx >= 0 {
+			// Inside a group — check if entire group is exhausted
+			gr := groupRanges[grIdx]
+			if state.GroupAllMaxesHit(gr, flatSteps) {
+				stepIndex = gr.End // skip entire group
+				state.ExitGroup()
+				continue
+			}
+			break // group has budget; enter group matching
 		}
-		return result, &MismatchError{
-			Scenario:  scn.Meta.Name,
-			StepIndex: stepIndex,
-			Expected:  expectedStep.Match.Argv,
-			Received:  argv,
+		bounds := flatSteps[stepIndex].EffectiveCalls()
+		if state.StepBudgetRemaining(stepIndex, bounds.Max) > 0 {
+			break
+		}
+		stepIndex++
+	}
+
+	// Update CurrentStep if we skipped exhausted steps
+	if stepIndex > state.CurrentStep {
+		state.CurrentStep = stepIndex
+	}
+
+	if stepIndex >= len(flatSteps) {
+		_, _ = fmt.Fprintf(stderr, "cli-replay: scenario %q already complete (all %d steps consumed)\n",
+			scn.Meta.Name, state.TotalSteps)
+		return &ReplayResult{ExitCode: 1, ScenarioName: scn.Meta.Name},
+			fmt.Errorf("scenario already complete")
+	}
+
+	// Determine if we're inside a group
+	grIdx := FindGroupContaining(groupRanges, stepIndex)
+
+	var matchedStep *scenario.Step
+	var matchedIndex int
+
+	if grIdx >= 0 {
+		// ─── Group path: unordered matching ───
+		gr := groupRanges[grIdx]
+		state.EnterGroup(grIdx)
+
+		// Linear scan all steps in group with remaining budget
+		matchedIndex = -1
+		for i := gr.Start; i < gr.End; i++ {
+			bounds := flatSteps[i].EffectiveCalls()
+			if state.StepBudgetRemaining(i, bounds.Max) <= 0 {
+				continue // step exhausted
+			}
+			if matcher.ArgvMatch(flatSteps[i].Match.Argv, argv) {
+				matchedIndex = i
+				matchedStep = &flatSteps[i]
+				break
+			}
+		}
+
+		if matchedStep == nil {
+			// No match in group — check if all mins are met
+			if state.GroupAllMinsMet(gr, flatSteps) {
+				// Soft-advance past group
+				state.CurrentStep = gr.End
+				state.ExitGroup()
+
+				// Retry matching at the step after the group
+				if gr.End < len(flatSteps) {
+					retryStep := &flatSteps[gr.End]
+					if matcher.ArgvMatch(retryStep.Match.Argv, argv) {
+						matchedIndex = gr.End
+						matchedStep = retryStep
+					}
+				}
+
+				if matchedStep == nil {
+					result := &ReplayResult{
+						ExitCode:     1,
+						Matched:      false,
+						StepIndex:    gr.End,
+						ScenarioName: scn.Meta.Name,
+					}
+					if gr.End < len(flatSteps) {
+						return result, &MismatchError{
+							Scenario:  scn.Meta.Name,
+							StepIndex: gr.End,
+							Expected:  flatSteps[gr.End].Match.Argv,
+							Received:  argv,
+						}
+					}
+					return result, fmt.Errorf("scenario already complete")
+				}
+			} else {
+				// Mins not met — GroupMismatchError
+				var candidates []int
+				var candidateArgv [][]string
+				for i := gr.Start; i < gr.End; i++ {
+					bounds := flatSteps[i].EffectiveCalls()
+					if state.StepBudgetRemaining(i, bounds.Max) > 0 {
+						candidates = append(candidates, i)
+						candidateArgv = append(candidateArgv, flatSteps[i].Match.Argv)
+					}
+				}
+				return &ReplayResult{
+					ExitCode:     1,
+					Matched:      false,
+					StepIndex:    stepIndex,
+					ScenarioName: scn.Meta.Name,
+				}, &GroupMismatchError{
+					Scenario:      scn.Meta.Name,
+					GroupName:     gr.Name,
+					GroupIndex:    grIdx,
+					Candidates:    candidates,
+					CandidateArgv: candidateArgv,
+					Received:      argv,
+				}
+			}
+		}
+	} else {
+		// ─── Ordered path: existing logic ───
+		expectedStep := &flatSteps[stepIndex]
+
+		// Phase 2: Try matching current step
+		matched := matcher.ArgvMatch(expectedStep.Match.Argv, argv)
+
+		// Phase 3: Soft-advance if current step doesn't match but min is met
+		softAdvanced := false
+		origStepIndex := stepIndex
+		if !matched {
+			bounds := expectedStep.EffectiveCalls()
+			if state.StepCounts != nil && stepIndex < len(state.StepCounts) &&
+				state.StepCounts[stepIndex] >= bounds.Min && stepIndex+1 < len(flatSteps) {
+
+				// Check if soft-advance would land in a group
+				nextIdx := stepIndex + 1
+				nextGrIdx := FindGroupContaining(groupRanges, nextIdx)
+				if nextGrIdx >= 0 {
+					// Soft-advance into a group — use group matching
+					gr := groupRanges[nextGrIdx]
+					state.CurrentStep = nextIdx
+					state.EnterGroup(nextGrIdx)
+
+					for i := gr.Start; i < gr.End; i++ {
+						grBounds := flatSteps[i].EffectiveCalls()
+						if state.StepBudgetRemaining(i, grBounds.Max) <= 0 {
+							continue
+						}
+						if matcher.ArgvMatch(flatSteps[i].Match.Argv, argv) {
+							matchedIndex = i
+							matchedStep = &flatSteps[i]
+							break
+						}
+					}
+
+					if matchedStep == nil {
+						// No match in the group either
+						result := &ReplayResult{
+							ExitCode:     1,
+							Matched:      false,
+							StepIndex:    origStepIndex,
+							ScenarioName: scn.Meta.Name,
+						}
+						return result, &MismatchError{
+							Scenario:     scn.Meta.Name,
+							StepIndex:    origStepIndex,
+							Expected:     flatSteps[origStepIndex].Match.Argv,
+							Received:     argv,
+							SoftAdvanced: true,
+							NextStepIndex: nextIdx,
+							NextExpected:  flatSteps[nextIdx].Match.Argv,
+						}
+					}
+				} else {
+					// Normal ordered soft-advance
+					softAdvanced = true
+					stepIndex++
+					state.CurrentStep = stepIndex
+					expectedStep = &flatSteps[stepIndex]
+					matched = matcher.ArgvMatch(expectedStep.Match.Argv, argv)
+				}
+			}
+		}
+
+		if matchedStep == nil {
+			// Handle result from ordered path (non-group)
+			if matched {
+				matchedIndex = stepIndex
+				matchedStep = expectedStep
+			} else {
+				result := &ReplayResult{
+					ExitCode:     1,
+					Matched:      false,
+					StepIndex:    stepIndex,
+					ScenarioName: scn.Meta.Name,
+				}
+				mErr := &MismatchError{
+					Scenario:  scn.Meta.Name,
+					StepIndex: stepIndex,
+					Expected:  expectedStep.Match.Argv,
+					Received:  argv,
+				}
+				if softAdvanced {
+					mErr.SoftAdvanced = true
+					mErr.NextStepIndex = stepIndex
+					mErr.NextExpected = expectedStep.Match.Argv
+					// Report against the original step
+					mErr.StepIndex = origStepIndex
+					mErr.Expected = flatSteps[origStepIndex].Match.Argv
+				}
+				return result, mErr
+			}
+		}
+	}
+
+	// Increment call count for the matched step
+	state.IncrementStep(matchedIndex)
+
+	// stdin matching: if the step defines match.stdin, read actual stdin and compare
+	if matchedStep.Match.Stdin != "" {
+		actualStdin, readErr := readStdin()
+		if readErr != nil {
+			_, _ = fmt.Fprintf(stderr, "cli-replay: failed to read stdin: %v\n", readErr)
+			return &ReplayResult{ExitCode: 1, ScenarioName: scn.Meta.Name}, readErr
+		}
+		if normalizeStdin(actualStdin) != normalizeStdin(matchedStep.Match.Stdin) {
+			return &ReplayResult{ExitCode: 1, ScenarioName: scn.Meta.Name},
+				&StdinMismatchError{
+					Scenario:  scn.Meta.Name,
+					StepIndex: matchedIndex,
+					Expected:  matchedStep.Match.Stdin,
+					Received:  actualStdin,
+				}
+		}
+	}
+
+	// Auto-advance CurrentStep
+	if grIdx >= 0 {
+		gr := groupRanges[grIdx]
+		// Inside a group — check if group is now fully exhausted
+		if state.GroupAllMaxesHit(gr, flatSteps) {
+			state.CurrentStep = gr.End
+			state.ExitGroup()
+		}
+	} else {
+		// Ordered path — advance if budget exhausted
+		bounds := matchedStep.EffectiveCalls()
+		if state.StepBudgetRemaining(matchedIndex, bounds.Max) <= 0 {
+			state.CurrentStep = matchedIndex + 1
 		}
 	}
 
 	// Execute response with template rendering
-	exitCode := ReplayResponseWithTemplate(expectedStep, scn, absPath, stdout, stderr)
+	exitCode := ReplayResponseWithTemplate(matchedStep, scn, absPath, stdout, stderr)
 
 	// Trace output if enabled
 	if IsTraceEnabled(os.Getenv(TraceEnvVar)) {
-		WriteTraceOutput(stderr, stepIndex, argv, exitCode)
+		WriteTraceOutput(stderr, matchedIndex, argv, exitCode)
 	}
 
-	// Advance state
-	state.Advance()
+	// Save state (step count already incremented above, CurrentStep already advanced if needed)
 	if err := WriteState(stateFile, state); err != nil {
 		_, _ = fmt.Fprintf(stderr, "cli-replay: warning: failed to save state: %v\n", err)
 	}
@@ -207,7 +442,7 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 	return &ReplayResult{
 		ExitCode:     exitCode,
 		Matched:      true,
-		StepIndex:    stepIndex,
+		StepIndex:    matchedIndex,
 		ScenarioName: scn.Meta.Name,
 	}, nil
 }
@@ -224,12 +459,62 @@ func hashScenarioFile(path string) string {
 
 // MismatchError represents an argv mismatch during replay.
 type MismatchError struct {
-	Scenario  string
-	StepIndex int
-	Expected  []string
-	Received  []string
+	Scenario      string
+	StepIndex     int
+	Expected      []string
+	Received      []string
+	SoftAdvanced  bool     // true if we tried soft-advancing past a satisfied step
+	NextStepIndex int      // index of the next step tried (when SoftAdvanced)
+	NextExpected  []string // argv of the next step tried (when SoftAdvanced)
 }
 
 func (e *MismatchError) Error() string {
 	return fmt.Sprintf("argv mismatch at step %d", e.StepIndex)
+}
+
+// StdinMismatchError represents a stdin content mismatch during replay.
+type StdinMismatchError struct {
+	Scenario  string
+	StepIndex int
+	Expected  string
+	Received  string
+}
+
+func (e *StdinMismatchError) Error() string {
+	return fmt.Sprintf("stdin mismatch at step %d", e.StepIndex)
+}
+
+// GroupMismatchError is returned when a command does not match any step
+// within an unordered group and the group's minimum counts are not yet met.
+type GroupMismatchError struct {
+	Scenario      string
+	GroupName     string
+	GroupIndex    int        // index into GroupRanges()
+	Candidates    []int      // flat indices of unconsumed group steps
+	CandidateArgv [][]string // argv of each candidate step
+	Received      []string   // the received argv that didn't match
+}
+
+func (e *GroupMismatchError) Error() string {
+	return fmt.Sprintf("no match in group %q (index %d): received %v",
+		e.GroupName, e.GroupIndex, e.Received)
+}
+
+// maxStdinBytes is the maximum number of bytes to read from stdin (1 MB).
+const maxStdinBytes = 1 << 20
+
+// readStdin reads stdin content up to maxStdinBytes.
+func readStdin() (string, error) {
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxStdinBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read stdin: %w", err)
+	}
+	return string(data), nil
+}
+
+// normalizeStdin normalizes stdin content for comparison:
+// converts \r\n to \n and trims trailing newlines.
+func normalizeStdin(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.TrimRight(s, "\n")
 }

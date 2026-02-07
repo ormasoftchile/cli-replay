@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 )
 
 var runShellFlag string
+var allowedCommandsFlag string
 
 var runCmd = &cobra.Command{
 	Use:   "run <scenario.yaml>",
@@ -40,6 +42,7 @@ detected from the PSModulePath (PowerShell) or SHELL environment variable.`,
 
 func init() { //nolint:gochecknoinits // Standard cobra pattern
 	runCmd.Flags().StringVar(&runShellFlag, "shell", "", "Output format: powershell, bash, cmd (auto-detected if omitted)")
+	runCmd.Flags().StringVar(&allowedCommandsFlag, "allowed-commands", "", "Comma-separated list of commands allowed to be intercepted")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -63,13 +66,13 @@ func runRun(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("scenario has no steps with a command name")
 	}
 
-	// Calculate scenario hash for state tracking
-	data, readErr := os.ReadFile(absPath) //nolint:gosec // user-provided path is expected
-	scenarioHash := ""
-	if readErr == nil {
-		h := sha256.Sum256(data)
-		scenarioHash = hex.EncodeToString(h[:])
+	// Validate allowlist before creating intercepts (T036)
+	if err := checkAllowlist(scn); err != nil {
+		return err
 	}
+
+	// Calculate scenario hash for state tracking
+	scenarioHash := hashScenarioFile(absPath)
 
 	// Locate our own binary to create intercepts
 	self, err := os.Executable()
@@ -77,8 +80,8 @@ func runRun(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to locate cli-replay binary: %w", err)
 	}
 
-	// Create intercept directory
-	interceptDir, err := os.MkdirTemp("", "cli-replay-intercept-")
+	// Create intercept directory inside .cli-replay/ next to scenario
+	interceptDir, err := runner.InterceptDirPath(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to create intercept directory: %w", err)
 	}
@@ -98,7 +101,7 @@ func runRun(_ *cobra.Command, args []string) error {
 	// Initialize state (resets to step 0) and store intercept dir
 	// Use session-aware state path so parallel runs don't collide
 	stateFile := runner.StateFilePathWithSession(absPath, sessionID)
-	state := runner.NewState(absPath, scenarioHash, len(scn.Steps))
+	state := runner.NewState(absPath, scenarioHash, len(scn.FlatSteps()))
 	state.InterceptDir = interceptDir
 	if err := runner.WriteState(stateFile, state); err != nil {
 		_ = os.RemoveAll(interceptDir)
@@ -107,7 +110,7 @@ func runRun(_ *cobra.Command, args []string) error {
 
 	// Status to stderr (not piped to Invoke-Expression / eval)
 	fmt.Fprintf(os.Stderr, "cli-replay: session initialized for %q (%d steps, %d commands)\n",
-		scn.Meta.Name, len(scn.Steps), len(commands))
+		scn.Meta.Name, len(scn.FlatSteps()), len(commands))
 	fmt.Fprintf(os.Stderr, "  intercept dir: %s\n", interceptDir)
 	fmt.Fprintf(os.Stderr, "  commands: %s\n", strings.Join(commands, ", "))
 
@@ -123,7 +126,7 @@ func runRun(_ *cobra.Command, args []string) error {
 func extractCommands(scn *scenario.Scenario) []string {
 	seen := make(map[string]bool)
 	var cmds []string
-	for _, step := range scn.Steps {
+	for _, step := range scn.FlatSteps() {
 		if len(step.Match.Argv) == 0 {
 			continue
 		}
@@ -187,20 +190,30 @@ func detectShell(explicit string) string {
 
 // emitShellSetup writes shell-specific commands to stdout that set
 // CLI_REPLAY_SESSION, CLI_REPLAY_SCENARIO, and prepend the intercept directory to PATH.
+// For bash/zsh/sh, also emits a cleanup trap function and trap statement.
 func emitShellSetup(shell, interceptDir, scenarioPath, sessionID string) {
+	writeShellSetup(os.Stdout, shell, interceptDir, scenarioPath, sessionID)
+}
+
+// writeShellSetup writes shell-specific setup commands to the given writer.
+// Separated from emitShellSetup for testability.
+func writeShellSetup(w io.Writer, shell, interceptDir, scenarioPath, sessionID string) {
 	switch shell {
 	case "powershell":
-		fmt.Printf("$env:CLI_REPLAY_SESSION = '%s'\n", sessionID)
-		fmt.Printf("$env:CLI_REPLAY_SCENARIO = '%s'\n", strings.ReplaceAll(scenarioPath, "'", "''"))
-		fmt.Printf("$env:PATH = '%s' + ';' + $env:PATH\n", strings.ReplaceAll(interceptDir, "'", "''"))
+		fmt.Fprintf(w, "$env:CLI_REPLAY_SESSION = '%s'\n", sessionID)
+		fmt.Fprintf(w, "$env:CLI_REPLAY_SCENARIO = '%s'\n", strings.ReplaceAll(scenarioPath, "'", "''"))
+		fmt.Fprintf(w, "$env:PATH = '%s' + ';' + $env:PATH\n", strings.ReplaceAll(interceptDir, "'", "''"))
 	case "cmd":
-		fmt.Printf("set \"CLI_REPLAY_SESSION=%s\"\n", sessionID)
-		fmt.Printf("set \"CLI_REPLAY_SCENARIO=%s\"\n", scenarioPath)
-		fmt.Printf("set \"PATH=%s;%%PATH%%\"\n", interceptDir)
+		fmt.Fprintf(w, "set \"CLI_REPLAY_SESSION=%s\"\n", sessionID)
+		fmt.Fprintf(w, "set \"CLI_REPLAY_SCENARIO=%s\"\n", scenarioPath)
+		fmt.Fprintf(w, "set \"PATH=%s;%%PATH%%\"\n", interceptDir)
 	default: // bash / zsh / sh
-		fmt.Printf("export CLI_REPLAY_SESSION='%s'\n", sessionID)
-		fmt.Printf("export CLI_REPLAY_SCENARIO='%s'\n", strings.ReplaceAll(scenarioPath, "'", "'\\''"))
-		fmt.Printf("export PATH='%s':\"$PATH\"\n", strings.ReplaceAll(interceptDir, "'", "'\\''"))
+		fmt.Fprintf(w, "export CLI_REPLAY_SESSION='%s'\n", sessionID)
+		fmt.Fprintf(w, "export CLI_REPLAY_SCENARIO='%s'\n", strings.ReplaceAll(scenarioPath, "'", "'\\''"))
+		fmt.Fprintf(w, "export PATH='%s':\"$PATH\"\n", strings.ReplaceAll(interceptDir, "'", "'\\''"))
+		// Cleanup trap: auto-clean on exit or signal (FR-015, FR-016, FR-017)
+		fmt.Fprintf(w, "_cli_replay_clean() { if [ -n \"${_cli_replay_cleaned:-}\" ]; then return; fi; _cli_replay_cleaned=1; command cli-replay clean \"$CLI_REPLAY_SCENARIO\" 2>/dev/null; }\n")
+		fmt.Fprintf(w, "trap '_cli_replay_clean' EXIT INT TERM\n")
 	}
 }
 
@@ -214,3 +227,104 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
+// checkAllowlist validates that all scenario commands are permitted by the
+// effective allowlist (intersection of YAML and CLI flag lists).
+func checkAllowlist(scn *scenario.Scenario) error {
+	cliList := parseAllowedCommands(allowedCommandsFlag)
+	var yamlList []string
+	if scn.Meta.Security != nil {
+		yamlList = scn.Meta.Security.AllowedCommands
+	}
+	return validateAllowlist(scn, yamlList, cliList)
+}
+
+// hashScenarioFile returns a hex-encoded SHA256 hash of the file content.
+func hashScenarioFile(path string) string {
+	data, err := os.ReadFile(path) //nolint:gosec // user-provided path is expected
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+// parseAllowedCommands splits a comma-separated string into a slice of
+// trimmed, non-empty command names.
+func parseAllowedCommands(flag string) []string {
+	if flag == "" {
+		return nil
+	}
+	parts := strings.Split(flag, ",")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// effectiveAllowlist computes the effective allowlist from YAML and CLI lists.
+// If both are set, returns the intersection. If only one is set, returns that.
+// If neither is set, returns nil (no restrictions).
+func effectiveAllowlist(yamlList, cliList []string) []string {
+	if len(yamlList) == 0 && len(cliList) == 0 {
+		return nil
+	}
+	if len(yamlList) == 0 {
+		return cliList
+	}
+	if len(cliList) == 0 {
+		return yamlList
+	}
+	// Intersection
+	set := make(map[string]bool)
+	for _, c := range yamlList {
+		set[c] = true
+	}
+	var result []string
+	for _, c := range cliList {
+		if set[c] {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// validateAllowlist checks that all commands referenced in scenario steps
+// are present in the effective allowlist. Returns an error for the first
+// disallowed command found. Uses filepath.Base on argv[0] to handle paths.
+// On Windows, comparison is case-insensitive.
+func validateAllowlist(scn *scenario.Scenario, yamlList, cliList []string) error {
+	allowed := effectiveAllowlist(yamlList, cliList)
+	if allowed == nil {
+		return nil // no restrictions
+	}
+
+	// Build lookup set
+	set := make(map[string]bool)
+	for _, c := range allowed {
+		if runtime.GOOS == "windows" {
+			set[strings.ToLower(c)] = true
+		} else {
+			set[c] = true
+		}
+	}
+
+	for i, step := range scn.FlatSteps() {
+		if len(step.Match.Argv) == 0 {
+			continue
+		}
+		cmd := filepath.Base(step.Match.Argv[0])
+		lookupCmd := cmd
+		if runtime.GOOS == "windows" {
+			lookupCmd = strings.ToLower(cmd)
+		}
+		if !set[lookupCmd] {
+			return fmt.Errorf("command %q is not in the allowed commands list: %v\n  Scenario: %s\n  Step %d: %v",
+				cmd, allowed, scn.Meta.Name, i+1, step.Match.Argv)
+		}
+	}
+	return nil
+}

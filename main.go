@@ -55,11 +55,18 @@ func runIntercept() int {
 
 	result, err := runner.ExecuteReplay(scenarioPath, argv, os.Stdout, os.Stderr)
 	if err != nil {
-		// ExecuteReplay already writes detailed errors to stderr for mismatches
+		// Format and display typed errors with rich diagnostics
+		switch e := err.(type) {
+		case *runner.MismatchError:
+			fmt.Fprint(os.Stderr, runner.FormatMismatchError(e))
+		case *runner.StdinMismatchError:
+			fmt.Fprint(os.Stderr, runner.FormatStdinMismatchError(e))
+		default:
+			fmt.Fprintf(os.Stderr, "cli-replay: %v\n", err)
+		}
 		if result != nil {
 			return result.ExitCode
 		}
-		fmt.Fprintf(os.Stderr, "cli-replay: %v\n", err)
 		return 1
 	}
 

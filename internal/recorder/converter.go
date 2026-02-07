@@ -21,14 +21,15 @@ func ConvertToScenario(meta SessionMetadata, commands []RecordedCommand) (*scena
 			Name:        meta.Name,
 			Description: meta.Description,
 		},
-		Steps: make([]scenario.Step, 0, len(commands)),
+		Steps: make([]scenario.StepElement, 0, len(commands)),
 	}
 
 	// Convert each recorded command to a scenario step
 	for _, cmd := range commands {
 		step := scenario.Step{
 			Match: scenario.Match{
-				Argv: cmd.Argv,
+				Argv:  cmd.Argv,
+				Stdin: cmd.Stdin, // populated when non-empty
 			},
 			Respond: scenario.Response{
 				Exit:   cmd.ExitCode,
@@ -37,7 +38,7 @@ func ConvertToScenario(meta SessionMetadata, commands []RecordedCommand) (*scena
 			},
 		}
 
-		sc.Steps = append(sc.Steps, step)
+		sc.Steps = append(sc.Steps, scenario.StepElement{Step: &step})
 	}
 
 	return sc, nil

@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+meta:
+  name: security-allowlist
+  description: Scenario with security allowlist restricting interceptable commands
+  security:
+    allowed_commands:
+      - kubectl
+      - az
+
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME       READY   STATUS    RESTARTS   AGE
+        my-pod     1/1     Running   0          1d
+
+  - match:
+      argv: ["az", "account", "show"]
+    respond:
+      exit: 0
+      stdout: |
+        {
+          "id": "00000000-0000-0000-0000-000000000000",
+          "name": "my-subscription"
+        }

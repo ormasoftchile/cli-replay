@@ -17,6 +17,7 @@ type RecordingEntry struct {
 	Exit      int      `json:"exit"`
 	Stdout    string   `json:"stdout"`
 	Stderr    string   `json:"stderr"`
+	Stdin     string   `json:"stdin,omitempty"`
 	Encoding  string   `json:"encoding,omitempty"` // "" = UTF-8 text, "base64" = raw bytes
 }
 
@@ -105,6 +106,7 @@ func (l *RecordingLog) ToRecordedCommands() ([]RecordedCommand, error) {
 			ExitCode:  entry.Exit,
 			Stdout:    stdout,
 			Stderr:    stderr,
+			Stdin:     entry.Stdin,
 		}
 
 		if err := cmd.Validate(); err != nil {

@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+meta:
+  name: deploy-with-preflight
+  description: |
+    Demonstrates unordered step groups with barrier semantics.
+    The three pre-flight checks can be called in any order, but
+    the deployment step only becomes eligible after all three pass.
+
+    Usage:
+      cli-replay exec examples/recordings/step-group-demo.yaml -- bash examples/recordings/step-group-demo.sh
+
+steps:
+  # Ordered: must happen first
+  - match:
+      argv: [git, status]
+    respond:
+      exit: 0
+      stdout: "On branch main\nnothing to commit, working tree clean\n"
+
+  # Unordered group: these 3 commands can happen in any order
+  - group:
+      mode: unordered
+      name: pre-flight
+      steps:
+        - match:
+            argv: [az, account, show]
+          calls:
+            min: 1
+            max: 2
+          respond:
+            exit: 0
+            stdout: '{"name": "my-subscription", "state": "Enabled"}'
+
+        - match:
+            argv: [docker, info]
+          respond:
+            exit: 0
+            stdout: "Server Version: 24.0\n"
+
+        - match:
+            argv: [kubectl, cluster-info]
+          respond:
+            exit: 0
+            stdout: "Kubernetes control plane is running at https://127.0.0.1:6443\n"
+
+  # Ordered: must happen after all pre-flight checks pass
+  - match:
+      argv: [kubectl, apply, -f, app.yaml]
+    respond:
+      exit: 0
+      stdout: "deployment.apps/app configured\n"
