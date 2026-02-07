@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -21,6 +22,7 @@ func makeExecRoot() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	execAllowedCommandsFlag = ""
 	execFormatFlag = ""
 	execReportFileFlag = ""
+	execDryRunFlag = false
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -40,6 +42,7 @@ func makeExecRoot() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	ex.Flags().StringVar(&execAllowedCommandsFlag, "allowed-commands", "", "Comma-separated list of commands allowed to be intercepted")
 	ex.Flags().StringVar(&execFormatFlag, "format", "", "Output format for verification report: json or junit")
 	ex.Flags().StringVar(&execReportFileFlag, "report-file", "", "Write verification report to file instead of stderr")
+	ex.Flags().BoolVar(&execDryRunFlag, "dry-run", false, "Preview the scenario without spawning a child process")
 	root.AddCommand(ex)
 
 	root.SetOut(stdout)
@@ -517,4 +520,80 @@ func TestExecCommand_FormatFlagRegistered(t *testing.T) {
 			break
 		}
 	}
+}
+
+// T034: Tests for exec --dry-run
+
+func TestExecCommand_DryRun_ValidScenario(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-specific test")
+	}
+
+	root, stdout, _ := makeExecRoot()
+	tmpDir := t.TempDir()
+	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
+
+	root.SetArgs([]string{"exec", "--dry-run", scenarioPath, "--", "echo", "hello"})
+	err := root.Execute()
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "Scenario: test-scenario")
+	assert.Contains(t, output, "echo hello")
+	assert.Contains(t, output, "Steps: 1")
+
+	// Verify no side effects: no child process spawned, no intercept dirs, no state files
+	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
+	entries, _ := filepath.Glob(filepath.Join(cliReplayDir, "intercept-*"))
+	assert.Empty(t, entries, "dry-run should not create intercept dirs")
+}
+
+func TestExecCommand_DryRun_InvalidScenario(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-specific test")
+	}
+
+	root, _, _ := makeExecRoot()
+
+	root.SetArgs([]string{"exec", "--dry-run", "/nonexistent.yaml", "--", "echo"})
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load scenario")
+}
+
+func TestExecCommand_DryRun_FlagRegistered(t *testing.T) {
+	root, _, _ := makeExecRoot()
+
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "exec" {
+			f := cmd.Flags().Lookup("dry-run")
+			assert.NotNil(t, f, "--dry-run flag should be registered")
+			assert.Equal(t, "false", f.DefValue)
+			break
+		}
+	}
+}
+
+// T040: Build-constrained signal forwarding test — verifies that
+// setupSignalForwarding returns a non-nil cleanup function on the
+// current platform. The implementation is in exec_unix.go and
+// exec_windows.go with build tags, so this test exercises whichever
+// variant is compiled into the current binary.
+func TestSetupSignalForwarding_ReturnsCleanup(t *testing.T) {
+	// Create a dummy command that we never start — we only need a valid
+	// *exec.Cmd to pass to setupSignalForwarding.
+	var dummyCmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		dummyCmd = exec.Command("cmd.exe", "/c", "echo", "hello")
+	} else {
+		dummyCmd = exec.Command("echo", "hello")
+	}
+
+	cleanup := setupSignalForwarding(dummyCmd)
+	assert.NotNil(t, cleanup, "setupSignalForwarding must return a non-nil cleanup function")
+
+	// Call cleanup — should not panic even though the process was never started
+	assert.NotPanics(t, func() {
+		cleanup()
+	}, "cleanup function should not panic when called before process start")
 }

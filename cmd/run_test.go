@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -235,4 +237,86 @@ func TestEmitShellSetup_CmdNoTrap(t *testing.T) {
 	// cmd should NOT have bash-style trap
 	assert.NotContains(t, output, "trap ")
 	assert.NotContains(t, output, "_cli_replay_clean")
+}
+
+// T033: Dry-run tests for `run` command
+
+func TestRunDryRun_ValidScenario(t *testing.T) {
+	tmpDir := t.TempDir()
+	scenarioContent := `
+meta:
+  name: "dry-run-test"
+  description: "Test scenario for dry-run"
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+      stdout: "pod-1 Running"
+  - match:
+      argv: ["kubectl", "delete", "pod", "pod-1"]
+    respond:
+      exit: 1
+      stderr: "pod deleted"
+`
+	scenarioPath := writeScenarioFile(t, tmpDir, scenarioContent)
+
+	// Execute the run command with --dry-run
+	rootCmd.SetArgs([]string{"run", "--dry-run", scenarioPath})
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+
+	err := rootCmd.Execute()
+	// Reset for other tests
+	runDryRunFlag = false
+
+	require.NoError(t, err)
+
+	output := stdout.String()
+	assert.Contains(t, output, "Scenario: dry-run-test")
+	assert.Contains(t, output, "kubectl get pods")
+	assert.Contains(t, output, "kubectl delete pod pod-1")
+	assert.Contains(t, output, "Steps: 2")
+
+	// Verify no state files or intercept dirs created
+	assertNoSideEffects(t, tmpDir)
+}
+
+func TestRunDryRun_InvalidScenario(t *testing.T) {
+	tmpDir := t.TempDir()
+	scenarioContent := `
+meta:
+  name: ""
+steps: []
+`
+	scenarioPath := writeScenarioFile(t, tmpDir, scenarioContent)
+
+	rootCmd.SetArgs([]string{"run", "--dry-run", scenarioPath})
+	var stderr bytes.Buffer
+	rootCmd.SetErr(&stderr)
+
+	err := rootCmd.Execute()
+	runDryRunFlag = false
+
+	require.Error(t, err)
+}
+
+// writeScenarioFile writes YAML content to a temp scenario file and returns the path.
+func writeScenarioFile(t *testing.T, dir, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, "scenario.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0600))
+	return path
+}
+
+// assertNoSideEffects verifies no .cli-replay directory or state files were created.
+func assertNoSideEffects(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // dir doesn't exist = no side effects
+	}
+	for _, e := range entries {
+		assert.NotEqual(t, ".cli-replay", e.Name(), "dry-run should not create .cli-replay directory")
+	}
 }

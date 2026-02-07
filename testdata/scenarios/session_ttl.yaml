@@ -1,0 +1,24 @@
+meta:
+  name: session-ttl-demo
+  description: >
+    Demonstrates session.ttl — stale replay sessions older than 10 minutes
+    are automatically cleaned on startup.
+  vars:
+    cluster: demo-cluster
+  session:
+    ttl: 10m
+steps:
+  - match:
+      argv: [kubectl, get, pods]
+    respond:
+      exit: 0
+      stdout: |
+        NAME          READY   STATUS    RESTARTS   AGE
+        web-{{ .cluster }}   1/1     Running   0          5m
+  - match:
+      argv: [kubectl, get, svc]
+    respond:
+      exit: 0
+      stdout: |
+        NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+        kubernetes   ClusterIP   10.0.0.1     <none>        443/TCP   10d

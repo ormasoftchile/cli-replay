@@ -1,0 +1,14 @@
+meta:
+  name: capture-conflict
+  description: Capture identifier conflicts with an existing meta.vars key
+  vars:
+    region: eastus
+
+steps:
+  - match:
+      argv: ["az", "group", "show"]
+    respond:
+      exit: 0
+      stdout: "region={{ .region }}"
+      capture:
+        region: "westus2"

@@ -1,0 +1,36 @@
+meta:
+  name: capture-group
+  description: Unordered group where sibling steps define and reference captures
+
+steps:
+  - match:
+      argv: ["setup"]
+    respond:
+      exit: 0
+      stdout: "ready"
+      capture:
+        base_id: "base-123"
+
+  - group:
+      mode: unordered
+      name: monitoring
+      steps:
+        - match:
+            argv: ["kubectl", "get", "pods"]
+          respond:
+            exit: 0
+            stdout: "web-pod-1"
+            capture:
+              first_pod: "web-pod-1"
+
+        - match:
+            argv: ["kubectl", "get", "svc"]
+          respond:
+            exit: 0
+            stdout: 'svc for {{ .capture.first_pod }} base={{ .capture.base_id }}'
+
+  - match:
+      argv: ["teardown"]
+    respond:
+      exit: 0
+      stdout: 'done base={{ .capture.base_id }}'

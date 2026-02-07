@@ -5,9 +5,30 @@ package scenario
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+	"text/template/parse"
 	"time"
 )
+
+// Session defines session lifecycle configuration.
+type Session struct {
+	TTL string `yaml:"ttl,omitempty"`
+}
+
+// Validate checks that the session configuration is valid.
+func (s *Session) Validate() error {
+	if s.TTL != "" {
+		d, err := time.ParseDuration(s.TTL)
+		if err != nil {
+			return fmt.Errorf("invalid ttl %q: %w", s.TTL, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("ttl must be positive, got %s", s.TTL)
+		}
+	}
+	return nil
+}
 
 // Scenario represents a complete test definition loaded from a YAML file.
 type Scenario struct {
@@ -36,7 +57,136 @@ func (s *Scenario) Validate() error {
 			groupIdx++
 		}
 	}
+
+	// Cross-cutting validation: capture-vs-vars conflicts and forward references
+	if err := s.validateCaptures(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateCaptures checks for capture identifier conflicts with meta.vars
+// and for forward references in template expressions.
+func (s *Scenario) validateCaptures() error {
+	flatSteps := s.FlatSteps()
+
+	// Check capture-vs-vars conflicts
+	for i, step := range flatSteps {
+		for key := range step.Respond.Capture {
+			if _, exists := s.Meta.Vars[key]; exists {
+				return fmt.Errorf("step %d: capture identifier %q conflicts with meta.vars key %q", i, key, key)
+			}
+		}
+	}
+
+	// Check forward references: accumulate defined captures, then check
+	// template references in stdout/stderr for each step.
+	defined := make(map[string]int) // capture ID → flat step index where first defined
+	for i, step := range flatSteps {
+		// Check templates in this step's stdout and stderr for capture references
+		for _, tmplStr := range []string{step.Respond.Stdout, step.Respond.Stderr} {
+			refs := extractCaptureRefs(tmplStr)
+			for _, ref := range refs {
+				if defIdx, ok := defined[ref]; ok {
+					_ = defIdx // defined earlier, OK
+				} else {
+					// Check if it's defined at a later step (forward reference)
+					futureIdx := -1
+					for j := i + 1; j < len(flatSteps); j++ {
+						if _, exists := flatSteps[j].Respond.Capture[ref]; exists {
+							futureIdx = j
+							break
+						}
+					}
+					if futureIdx >= 0 {
+						return fmt.Errorf("step %d references capture %q first defined at step %d (forward reference)", i, ref, futureIdx)
+					}
+					// Not defined anywhere — that's OK (will resolve to empty string at runtime
+					// for unordered groups or optional steps)
+				}
+			}
+		}
+
+		// Add this step's captures to the defined set
+		for key := range step.Respond.Capture {
+			if _, exists := defined[key]; !exists {
+				defined[key] = i
+			}
+		}
+	}
+
+	return nil
+}
+
+// extractCaptureRefs parses a Go template string and returns all capture
+// identifiers referenced via {{ .capture.X }} patterns, using the
+// text/template/parse AST for accurate detection.
+func extractCaptureRefs(tmplStr string) []string {
+	if tmplStr == "" {
+		return nil
+	}
+
+	tree, err := parse.Parse("check", tmplStr, "", "", nil)
+	if err != nil {
+		return nil // unparseable template — will error at render time
+	}
+
+	root, ok := tree["check"]
+	if !ok || root.Root == nil {
+		return nil
+	}
+
+	var refs []string
+	walkTree(root.Root, &refs)
+	return refs
+}
+
+// walkTree recursively walks a parse tree looking for field access patterns
+// that match .capture.X (a FieldNode with identifiers ["capture", "X"]).
+func walkTree(node parse.Node, refs *[]string) {
+	if node == nil {
+		return
+	}
+
+	switch n := node.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return
+		}
+		for _, child := range n.Nodes {
+			walkTree(child, refs)
+		}
+	case *parse.ActionNode:
+		walkTree(n.Pipe, refs)
+	case *parse.PipeNode:
+		if n == nil {
+			return
+		}
+		for _, cmd := range n.Cmds {
+			for _, arg := range cmd.Args {
+				walkTree(arg, refs)
+			}
+		}
+	case *parse.FieldNode:
+		// FieldNode.Ident is the list of field names after the dot.
+		// For {{ .capture.rg_id }}, Ident = ["capture", "rg_id"]
+		if len(n.Ident) == 2 && n.Ident[0] == "capture" {
+			*refs = append(*refs, n.Ident[1])
+		}
+	case *parse.IfNode:
+		walkTree(n.Pipe, refs)
+		walkTree(n.List, refs)
+		walkTree(n.ElseList, refs)
+	case *parse.RangeNode:
+		walkTree(n.Pipe, refs)
+		walkTree(n.List, refs)
+		walkTree(n.ElseList, refs)
+	case *parse.WithNode:
+		walkTree(n.Pipe, refs)
+		walkTree(n.List, refs)
+		walkTree(n.ElseList, refs)
+	}
 }
 
 // FlatSteps returns all leaf steps expanded inline. Groups are replaced by
@@ -147,17 +297,39 @@ type Meta struct {
 	Description string            `yaml:"description,omitempty"`
 	Vars        map[string]string `yaml:"vars,omitempty"`
 	Security    *Security         `yaml:"security,omitempty"`
+	Session     *Session          `yaml:"session,omitempty"`
 }
 
 // Security defines constraints on which commands may be intercepted.
 type Security struct {
 	AllowedCommands []string `yaml:"allowed_commands,omitempty"`
+	DenyEnvVars     []string `yaml:"deny_env_vars,omitempty"`
 }
 
 // Validate checks that the meta section is valid.
 func (m *Meta) Validate() error {
 	if strings.TrimSpace(m.Name) == "" {
 		return errors.New("name must be non-empty")
+	}
+	if m.Security != nil {
+		if err := m.Security.Validate(); err != nil {
+			return fmt.Errorf("security: %w", err)
+		}
+	}
+	if m.Session != nil {
+		if err := m.Session.Validate(); err != nil {
+			return fmt.Errorf("session: %w", err)
+		}
+	}
+	return nil
+}
+
+// Validate checks that the security configuration is valid.
+func (s *Security) Validate() error {
+	for i, pattern := range s.DenyEnvVars {
+		if pattern == "" {
+			return fmt.Errorf("deny_env_vars[%d]: must be non-empty", i)
+		}
 	}
 	return nil
 }
@@ -236,12 +408,13 @@ func (m *Match) Validate() error {
 
 // Response defines the output for a matched command.
 type Response struct {
-	Exit       int    `yaml:"exit"`
-	Stdout     string `yaml:"stdout,omitempty"`
-	Stderr     string `yaml:"stderr,omitempty"`
-	StdoutFile string `yaml:"stdout_file,omitempty"`
-	StderrFile string `yaml:"stderr_file,omitempty"`
-	Delay      string `yaml:"delay,omitempty"`
+	Exit       int               `yaml:"exit"`
+	Stdout     string            `yaml:"stdout,omitempty"`
+	Stderr     string            `yaml:"stderr,omitempty"`
+	StdoutFile string            `yaml:"stdout_file,omitempty"`
+	StderrFile string            `yaml:"stderr_file,omitempty"`
+	Delay      string            `yaml:"delay,omitempty"`
+	Capture    map[string]string `yaml:"capture,omitempty"`
 }
 
 // ValidateDelay checks that the delay does not exceed the given maximum.
@@ -260,6 +433,9 @@ func (r *Response) ValidateDelay(maxDelay time.Duration) error {
 	return nil
 }
 
+// captureIdentifierRe validates capture key identifiers.
+var captureIdentifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
 // Validate checks that the response is valid.
 func (r *Response) Validate() error {
 	if r.Exit < 0 || r.Exit > 255 {
@@ -270,6 +446,11 @@ func (r *Response) Validate() error {
 	}
 	if r.Stderr != "" && r.StderrFile != "" {
 		return errors.New("stderr and stderr_file are mutually exclusive")
+	}
+	for key := range r.Capture {
+		if !captureIdentifierRe.MatchString(key) {
+			return fmt.Errorf("capture identifier %q must match [a-zA-Z_][a-zA-Z0-9_]*", key)
+		}
 	}
 	return nil
 }

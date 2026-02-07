@@ -501,6 +501,218 @@ steps:
 	assert.Equal(t, []string{"kubectl", "az"}, scn.Meta.Security.AllowedCommands)
 }
 
+// T004: DenyEnvVars field tests
+
+func TestSecurity_DenyEnvVars(t *testing.T) {
+	t.Run("security struct with deny_env_vars", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{"AWS_*", "GITHUB_TOKEN"}}
+		assert.Equal(t, []string{"AWS_*", "GITHUB_TOKEN"}, sec.DenyEnvVars)
+		assert.NoError(t, sec.Validate())
+	})
+
+	t.Run("empty deny_env_vars slice", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{}}
+		assert.NoError(t, sec.Validate())
+	})
+
+	t.Run("nil deny_env_vars", func(t *testing.T) {
+		sec := Security{}
+		assert.Nil(t, sec.DenyEnvVars)
+		assert.NoError(t, sec.Validate())
+	})
+}
+
+func TestSecurity_DenyEnvVars_Validation(t *testing.T) {
+	t.Run("empty string in deny_env_vars rejected", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{"AWS_*", ""}}
+		err := sec.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "deny_env_vars[1]: must be non-empty")
+	})
+
+	t.Run("valid patterns pass validation", func(t *testing.T) {
+		sec := Security{DenyEnvVars: []string{"*", "AWS_*", "GITHUB_TOKEN", "*_SECRET"}}
+		assert.NoError(t, sec.Validate())
+	})
+}
+
+func TestDenyEnvVarsYAMLParsing(t *testing.T) {
+	yamlContent := `
+meta:
+  name: deny-test
+  security:
+    allowed_commands:
+      - kubectl
+    deny_env_vars:
+      - "AWS_*"
+      - "GITHUB_TOKEN"
+      - "*_SECRET"
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.NotNil(t, scn.Meta.Security)
+	assert.Equal(t, []string{"AWS_*", "GITHUB_TOKEN", "*_SECRET"}, scn.Meta.Security.DenyEnvVars)
+	assert.Equal(t, []string{"kubectl"}, scn.Meta.Security.AllowedCommands)
+}
+
+func TestMeta_DenyEnvVarsValidation(t *testing.T) {
+	t.Run("meta with empty deny_env_vars entry fails validation", func(t *testing.T) {
+		meta := Meta{
+			Name:     "test",
+			Security: &Security{DenyEnvVars: []string{""}},
+		}
+		err := meta.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "security: deny_env_vars[0]: must be non-empty")
+	})
+}
+
+// T005: Session struct tests
+
+func TestSession_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		session     Session
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid TTL",
+			session: Session{TTL: "5m"},
+			wantErr: false,
+		},
+		{
+			name:    "valid TTL hours",
+			session: Session{TTL: "1h"},
+			wantErr: false,
+		},
+		{
+			name:    "valid TTL seconds",
+			session: Session{TTL: "30s"},
+			wantErr: false,
+		},
+		{
+			name:    "empty TTL is valid",
+			session: Session{TTL: ""},
+			wantErr: false,
+		},
+		{
+			name:        "invalid TTL format",
+			session:     Session{TTL: "never"},
+			wantErr:     true,
+			errContains: "invalid ttl",
+		},
+		{
+			name:        "negative TTL",
+			session:     Session{TTL: "-5m"},
+			wantErr:     true,
+			errContains: "ttl must be positive",
+		},
+		{
+			name:        "zero TTL",
+			session:     Session{TTL: "0s"},
+			wantErr:     true,
+			errContains: "ttl must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.session.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestMeta_WithSession(t *testing.T) {
+	t.Run("meta with session TTL", func(t *testing.T) {
+		meta := Meta{
+			Name:    "test",
+			Session: &Session{TTL: "10m"},
+		}
+		require.NoError(t, meta.Validate())
+		assert.Equal(t, "10m", meta.Session.TTL)
+	})
+
+	t.Run("meta with invalid session TTL", func(t *testing.T) {
+		meta := Meta{
+			Name:    "test",
+			Session: &Session{TTL: "invalid"},
+		}
+		err := meta.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "session: invalid ttl")
+	})
+
+	t.Run("meta without session", func(t *testing.T) {
+		meta := Meta{Name: "test"}
+		require.NoError(t, meta.Validate())
+		assert.Nil(t, meta.Session)
+	})
+}
+
+func TestSessionYAMLParsing(t *testing.T) {
+	yamlContent := `
+meta:
+  name: session-test
+  session:
+    ttl: "5m"
+steps:
+  - match:
+      argv: ["terraform", "plan"]
+    respond:
+      exit: 0
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.NotNil(t, scn.Meta.Session)
+	assert.Equal(t, "5m", scn.Meta.Session.TTL)
+}
+
+func TestBothDenyEnvVarsAndSessionYAML(t *testing.T) {
+	yamlContent := `
+meta:
+  name: combined-test
+  security:
+    allowed_commands: [az]
+    deny_env_vars: ["*"]
+  session:
+    ttl: "10m"
+  vars:
+    region: "eastus2"
+steps:
+  - match:
+      argv: ["az", "account", "show"]
+    respond:
+      exit: 0
+      stdout: "region={{ .region }}\n"
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.NoError(t, scn.Validate())
+
+	require.NotNil(t, scn.Meta.Security)
+	assert.Equal(t, []string{"*"}, scn.Meta.Security.DenyEnvVars)
+	assert.Equal(t, []string{"az"}, scn.Meta.Security.AllowedCommands)
+
+	require.NotNil(t, scn.Meta.Session)
+	assert.Equal(t, "10m", scn.Meta.Session.TTL)
+	assert.Equal(t, "eastus2", scn.Meta.Vars["region"])
+}
+
 func TestResponse_Validate(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -561,6 +773,41 @@ func TestResponse_Validate(t *testing.T) {
 			response:    Response{Exit: 0, Stderr: "err", StderrFile: "file.txt"},
 			wantErr:     true,
 			errContains: "stderr and stderr_file are mutually exclusive",
+		},
+		// T011: Capture identifier validation tests
+		{
+			name:     "valid capture identifiers",
+			response: Response{Exit: 0, Capture: map[string]string{"rg_id": "val", "_underscore": "v", "CamelCase": "v"}},
+			wantErr:  false,
+		},
+		{
+			name:     "valid capture with empty map",
+			response: Response{Exit: 0, Capture: map[string]string{}},
+			wantErr:  false,
+		},
+		{
+			name:        "capture identifier starting with digit rejected",
+			response:    Response{Exit: 0, Capture: map[string]string{"1bad": "val"}},
+			wantErr:     true,
+			errContains: "capture identifier \"1bad\" must match",
+		},
+		{
+			name:        "capture identifier with hyphen rejected",
+			response:    Response{Exit: 0, Capture: map[string]string{"my-id": "val"}},
+			wantErr:     true,
+			errContains: "capture identifier \"my-id\" must match",
+		},
+		{
+			name:        "capture identifier with spaces rejected",
+			response:    Response{Exit: 0, Capture: map[string]string{"my id": "val"}},
+			wantErr:     true,
+			errContains: "capture identifier \"my id\" must match",
+		},
+		{
+			name:        "capture empty key rejected",
+			response:    Response{Exit: 0, Capture: map[string]string{"": "val"}},
+			wantErr:     true,
+			errContains: "must match",
 		},
 	}
 
@@ -794,4 +1041,194 @@ func TestScenario_GroupRanges(t *testing.T) {
 
 	assert.Equal(t, GroupRange{Start: 1, End: 3, Name: "g1", TopIndex: 1}, ranges[0])
 	assert.Equal(t, GroupRange{Start: 4, End: 5, Name: "g2", TopIndex: 3}, ranges[1])
+}
+
+// T012: Capture-vs-vars conflict and forward-reference detection tests
+
+func TestScenario_Validate_CaptureVarsConflict(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{
+			Name: "conflict-test",
+			Vars: map[string]string{"region": "eastus"},
+		},
+		Steps: []StepElement{
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd"}},
+				Respond: Response{Exit: 0, Capture: map[string]string{"region": "westus"}},
+			}},
+		},
+	}
+	err := scn.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "capture identifier \"region\" conflicts with meta.vars key")
+}
+
+func TestScenario_Validate_CaptureNoConflict(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{
+			Name: "no-conflict",
+			Vars: map[string]string{"region": "eastus"},
+		},
+		Steps: []StepElement{
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd"}},
+				Respond: Response{Exit: 0, Capture: map[string]string{"rg_id": "val"}},
+			}},
+		},
+	}
+	assert.NoError(t, scn.Validate())
+}
+
+func TestScenario_Validate_ForwardReference(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{Name: "forward-ref"},
+		Steps: []StepElement{
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd1"}},
+				Respond: Response{Exit: 0, Stdout: "val={{ .capture.vm_id }}"},
+			}},
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd2"}},
+				Respond: Response{Exit: 0, Capture: map[string]string{"vm_id": "vm-1"}},
+			}},
+		},
+	}
+	err := scn.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "step 0 references capture \"vm_id\" first defined at step 1 (forward reference)")
+}
+
+func TestScenario_Validate_NoForwardReference(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{Name: "no-forward-ref"},
+		Steps: []StepElement{
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd1"}},
+				Respond: Response{Exit: 0, Capture: map[string]string{"rg_id": "val"}},
+			}},
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd2"}},
+				Respond: Response{Exit: 0, Stdout: "rg={{ .capture.rg_id }}"},
+			}},
+		},
+	}
+	assert.NoError(t, scn.Validate())
+}
+
+func TestScenario_Validate_CaptureInStderr(t *testing.T) {
+	scn := Scenario{
+		Meta: Meta{Name: "stderr-forward-ref"},
+		Steps: []StepElement{
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd1"}},
+				Respond: Response{Exit: 0, Stderr: "err={{ .capture.x }}"},
+			}},
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd2"}},
+				Respond: Response{Exit: 0, Capture: map[string]string{"x": "val"}},
+			}},
+		},
+	}
+	err := scn.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "forward reference")
+}
+
+func TestScenario_Validate_UndefinedCaptureNotAnError(t *testing.T) {
+	// Referencing a capture that is never defined is NOT a validation error
+	// (it will resolve to empty string at runtime for unordered groups/optional steps)
+	scn := Scenario{
+		Meta: Meta{Name: "undefined-capture"},
+		Steps: []StepElement{
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd"}},
+				Respond: Response{Exit: 0, Stdout: "val={{ .capture.nonexistent }}"},
+			}},
+		},
+	}
+	assert.NoError(t, scn.Validate())
+}
+
+func TestScenario_Validate_CaptureWithGroup(t *testing.T) {
+	// Capture defined in a group step, referenced by a later ordered step — should pass
+	scn := Scenario{
+		Meta: Meta{Name: "group-capture"},
+		Steps: []StepElement{
+			{Group: &StepGroup{
+				Mode: "unordered",
+				Name: "setup",
+				Steps: []StepElement{
+					{Step: &Step{
+						Match:   Match{Argv: []string{"cmd1"}},
+						Respond: Response{Exit: 0, Capture: map[string]string{"id": "val"}},
+					}},
+				},
+			}},
+			{Step: &Step{
+				Match:   Match{Argv: []string{"cmd2"}},
+				Respond: Response{Exit: 0, Stdout: "id={{ .capture.id }}"},
+			}},
+		},
+	}
+	assert.NoError(t, scn.Validate())
+}
+
+func TestExtractCaptureRefs(t *testing.T) {
+	tests := []struct {
+		name string
+		tmpl string
+		want []string
+	}{
+		{"simple ref", "{{ .capture.rg_id }}", []string{"rg_id"}},
+		{"multiple refs", "{{ .capture.a }} and {{ .capture.b }}", []string{"a", "b"}},
+		{"no refs", "plain text {{ .name }}", nil},
+		{"empty string", "", nil},
+		{"nested in text", "prefix {{ .capture.x }} suffix", []string{"x"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refs := extractCaptureRefs(tt.tmpl)
+			assert.Equal(t, tt.want, refs)
+		})
+	}
+}
+
+func TestCaptureYAMLParsing(t *testing.T) {
+	yamlContent := `
+meta:
+  name: capture-yaml-test
+steps:
+  - match:
+      argv: ["az", "group", "create"]
+    respond:
+      exit: 0
+      stdout: '{"id": "rg-1"}'
+      capture:
+        rg_id: "rg-1"
+        rg_name: "demo-rg"
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.Len(t, scn.Steps, 1)
+	require.NotNil(t, scn.Steps[0].Step)
+	assert.Equal(t, map[string]string{"rg_id": "rg-1", "rg_name": "demo-rg"}, scn.Steps[0].Step.Respond.Capture)
+}
+
+func TestCaptureYAMLParsing_NoCaptureField(t *testing.T) {
+	yamlContent := `
+meta:
+  name: no-capture
+steps:
+  - match:
+      argv: ["cmd"]
+    respond:
+      exit: 0
+      stdout: "hello"
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	assert.Nil(t, scn.Steps[0].Step.Respond.Capture)
 }

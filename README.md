@@ -15,6 +15,8 @@ Record real command executions, replay them deterministically, and verify that y
 - **Call count bounds** — steps can declare `calls.min`/`calls.max` to support retry loops and polling without duplicating steps
 - **stdin matching** — validate piped input content during replay, and capture it during recording
 - **Security allowlist** — restrict which commands can be intercepted via YAML config or `--allowed-commands` flag
+- **Environment variable filtering** — block sensitive env vars from leaking into template rendering via glob patterns (`deny_env_vars`)
+- **Session TTL** — automatically clean up stale replay sessions older than a configurable duration
 - **Rich mismatch diagnostics** — per-element diff with color output, regex pattern display, and length mismatch detail
 - **Runs cross-platform** — single Go binary, no runtime dependencies, works on macOS, Linux, and Windows
 
@@ -131,6 +133,11 @@ meta:
     allowed_commands:
       - kubectl
       - az
+    deny_env_vars:                 # Optional: block env vars from templates
+      - "AWS_*"
+      - "SECRET_*"
+  session:                         # Optional: auto-cleanup stale sessions
+    ttl: "10m"                     # Go duration (e.g., 10m, 1h, 30s)
 
 steps:
   - match:
@@ -144,6 +151,8 @@ steps:
       stderr: "error message"      # Optional: literal stderr
       stdout_file: "fixtures/out.txt"  # Optional: file-based stdout
       stderr_file: "fixtures/err.txt"  # Optional: file-based stderr
+      capture:                     # Optional: capture key-value pairs for later steps
+        rg_id: "/subscriptions/abc123/resourceGroups/demo-rg"
     calls:                         # Optional: call count bounds (default: exactly once)
       min: 1                       # Minimum invocations required
       max: 5                       # Maximum invocations allowed
@@ -159,6 +168,11 @@ steps:
 - `stderr` and `stderr_file` are mutually exclusive
 - `calls.min` must be ≥ 0, `calls.max` must be ≥ `min` (when specified)
 - `calls.min: 0` creates an optional step (can be skipped entirely)
+- `deny_env_vars` entries must be non-empty strings (glob patterns via `path.Match`)
+- `session.ttl` must be a valid Go duration (`time.ParseDuration`) and positive
+- `capture` identifiers must match `[a-zA-Z_][a-zA-Z0-9_]*`
+- `capture` keys must not conflict with `meta.vars` keys
+- Templates referencing `{{ .capture.X }}` must not forward-reference (X must be defined in an earlier step)
 - Unknown fields are rejected (strict YAML parsing)
 
 ### Step Groups (Unordered Matching)
@@ -283,6 +297,7 @@ cli-replay run scenario.yaml
 | `--shell` | string | auto-detect | Output format: `powershell`, `bash`, `cmd` |
 | `--allowed-commands` | string | `""` | Comma-separated list of commands allowed to be intercepted |
 | `--max-delay` | string | `5m` | Maximum allowed delay duration (e.g., `5m`, `30s`) |
+| `--dry-run` | bool | `false` | Preview the scenario step sequence without creating intercepts |
 
 #### Security Allowlist
 
@@ -355,6 +370,7 @@ This is the recommended mode for CI pipelines. No `eval`, no manual cleanup.
 | `--allowed-commands` | string | `""` | Comma-separated list of commands allowed to be intercepted |
 | `--format` | string | `""` | Output format for verification: `json`, `junit`, or `text` |
 | `--report-file` | string | `""` | Write structured verification output to a file path |
+| `--dry-run` | bool | `false` | Preview the scenario without spawning a child process |
 
 When `--report-file` is set, verification results are written to the specified file. When `--format` is set without `--report-file`, structured output goes to stderr (stdout is reserved for the child process).
 
@@ -411,6 +427,26 @@ cli-replay clean              # uses CLI_REPLAY_SCENARIO from env
 
 Clean is idempotent — it is safe to call even if the state file has already been removed.
 
+#### TTL-Based Cleanup
+
+Clean only sessions older than a given duration:
+
+```bash
+# Clean expired sessions for a single scenario
+cli-replay clean --ttl 10m scenario.yaml
+
+# Bulk cleanup: walk a directory tree for all .cli-replay/ dirs
+cli-replay clean --ttl 1h --recursive .
+cli-replay clean --ttl 30m --recursive /path/to/projects
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--ttl` | string | `""` | Only clean sessions older than this Go duration (e.g., `10m`, `1h`) |
+| `--recursive` | bool | `false` | Walk directory tree for `.cli-replay/` dirs (requires `--ttl`) |
+
+**Safety guard**: `--recursive` requires `--ttl` to prevent accidental deletion of all sessions. Recursive walk skips `.git`, `node_modules`, `vendor`, and `.terraform` directories.
+
 ## Session Isolation
 
 When running parallel CI jobs, each `cli-replay run` or `cli-replay exec` invocation generates a unique session ID (set via `CLI_REPLAY_SESSION`). State files are scoped to the session, so parallel test runs using the same scenario file do not interfere with each other.
@@ -451,7 +487,7 @@ This ensures cleanup happens even if the script is interrupted (Ctrl+C) or termi
 |----------|-------------|
 | `CLI_REPLAY_SCENARIO` | Path to scenario file (required in intercept mode) |
 | `CLI_REPLAY_SESSION` | Session ID for isolation (auto-set by `run`, or set manually) |
-| `CLI_REPLAY_TRACE` | Set to "1" to enable trace output |
+| `CLI_REPLAY_TRACE` | Set to "1" to enable trace output (includes denied env var logging) |
 | `CLI_REPLAY_COLOR` | Force color output: `1` to enable, `0` to disable (overrides `NO_COLOR`) |
 | `NO_COLOR` | Set to any value to disable colored output (see [no-color.org](https://no-color.org)) |
 
@@ -480,6 +516,29 @@ export cluster="staging"
 # Now {{ .cluster }} renders as "staging"
 ```
 
+### Denying Environment Variables
+
+Prevent sensitive environment variables from leaking into template rendering using glob patterns in `meta.security.deny_env_vars`:
+
+```yaml
+meta:
+  vars:
+    cluster: "prod"              # safe default
+  security:
+    deny_env_vars:
+      - "AWS_*"                   # block all AWS_ prefixed vars
+      - "SECRET_*"                # block all SECRET_ prefixed vars
+      - "TOKEN"                   # block exact name
+      - "*"                       # block ALL env var overrides
+```
+
+**Behavior**:
+- Denied env vars resolve to the `meta.vars` default (or empty string if no default)
+- Patterns use `path.Match` glob syntax (`*` matches any sequence of non-separator characters)
+- Internal variables (`CLI_REPLAY_*`) are always exempt from deny rules
+- When `CLI_REPLAY_TRACE=1`, denied variables are logged: `cli-replay[trace]: denied env var SECRET_KEY`
+- If no `deny_env_vars` is configured, all env vars pass through (backward compatible)
+
 ## Dynamic Matching
 
 Use wildcards and regex patterns in `match.argv` for flexible command matching:
@@ -503,6 +562,54 @@ steps:
 
 - `{{ .any }}` — matches any single argument value
 - `{{ .regex "pattern" }}` — matches if the argument matches the given regex
+
+## Dynamic Capture — Chaining Output Between Steps
+
+Use `respond.capture` to store key-value pairs from a step's response, then reference them in later steps via `{{ .capture.<id> }}`:
+
+```yaml
+meta:
+  name: capture-demo
+  vars:
+    region: eastus
+
+steps:
+  - match:
+      argv: ["az", "group", "create", "--name", "demo-rg", "--location", "{{ .region }}"]
+    respond:
+      exit: 0
+      stdout: '{"id": "/subscriptions/abc123/resourceGroups/demo-rg"}'
+      capture:
+        rg_id: "/subscriptions/abc123/resourceGroups/demo-rg"
+
+  - match:
+      argv: ["az", "vm", "create", "--resource-group", "demo-rg"]
+    respond:
+      exit: 0
+      stdout: 'VM created in group {{ .capture.rg_id }}'
+```
+
+**Behavior**:
+- Captures are accumulated across steps — each step can reference captures from any prior step
+- Capture identifiers must match `[a-zA-Z_][a-zA-Z0-9_]*`
+- A capture key cannot conflict with a `meta.vars` key (validated at load time)
+- Forward references (referencing a capture before its defining step) are rejected at load time
+- In unordered groups, sibling captures resolve to empty string (best-effort) if the defining step hasn't run yet
+- Optional steps (`calls.min: 0`) that are never invoked do not add their captures
+
+## Dry-Run Mode — Preview Without Side Effects
+
+Use `--dry-run` on `run` or `exec` to preview a scenario's step sequence without creating intercepts, spawning child processes, or modifying state:
+
+```bash
+# Preview with run
+cli-replay run --dry-run scenario.yaml
+
+# Preview with exec
+cli-replay exec --dry-run scenario.yaml -- make deploy
+```
+
+The dry-run output shows numbered steps with match patterns, exit codes, call bounds, group membership, captures, template variables, allowlist validation, and stdout previews. No files are created and no child processes are started.
 
 ## Call Count Bounds
 
@@ -621,6 +728,27 @@ Mismatch at step 2 of "deployment-test":
 
 Color output is auto-detected from the terminal, and can be controlled via `CLI_REPLAY_COLOR` or `NO_COLOR` environment variables.
 
+## Session TTL (Auto-Cleanup)
+
+Configure automatic cleanup of stale replay sessions via `meta.session.ttl`:
+
+```yaml
+meta:
+  name: my-scenario
+  session:
+    ttl: "10m"    # Clean sessions older than 10 minutes
+```
+
+**Behavior**:
+- On `cli-replay run`, `exec`, or intercept startup, stale sessions (based on `last_updated` timestamp) are automatically removed
+- Only the `.cli-replay/` directory next to the scenario file is scanned
+- State files with `last_updated` in the future are treated as active (with a warning)
+- Permission errors on individual files are logged and skipped
+- Cleanup summary is emitted to stderr: `cli-replay: cleaned N expired sessions`
+- If no `session.ttl` is configured, no automatic cleanup occurs (backward compatible)
+
+For bulk cleanup across many projects, use [`cli-replay clean --ttl --recursive`](#ttl-based-cleanup).
+
 ## How It Works
 
 1. **Symlink Interception**: Create symlinks to cli-replay named after commands you want to fake (e.g., `kubectl`, `az`)
@@ -717,6 +845,20 @@ Also verify PATHEXT includes `.CMD` (it does by default on Windows 10+):
 
 ```powershell
 $env:PATHEXT  # Should contain .CMD
+```
+
+### Windows: Signal Handling (Ctrl+C / Process Termination)
+
+On Unix, cli-replay forwards `SIGINT` and `SIGTERM` to child processes during `exec` mode. On Windows, `SIGTERM` is not supported — cli-replay uses `Process.Kill()` instead when Ctrl+C is pressed.
+
+**Known limitations on Windows:**
+- `Process.Kill()` does not propagate to grandchild processes. If your child spawns sub-processes, they may be orphaned after Ctrl+C
+- There is no graceful shutdown option — the child is killed immediately
+- If cleanup fails due to orphaned grandchildren, run `cli-replay clean` manually to remove stale state and intercept directories
+
+```powershell
+# Manual cleanup after unexpected termination on Windows
+cli-replay clean scenario.yaml
 ```
 
 ## License

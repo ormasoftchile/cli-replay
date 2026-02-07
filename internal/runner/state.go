@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,15 +16,16 @@ import (
 
 // State tracks scenario progress across CLI invocations.
 type State struct {
-	ScenarioPath  string    `json:"scenario_path"`
-	ScenarioHash  string    `json:"scenario_hash"`
-	CurrentStep   int       `json:"current_step"`
-	TotalSteps    int       `json:"total_steps"`
-	StepCounts    []int     `json:"step_counts,omitempty"`
-	ConsumedSteps []bool    `json:"consumed_steps,omitempty"` // deprecated: read-only migration
-	ActiveGroup   *int      `json:"active_group,omitempty"`
-	InterceptDir  string    `json:"intercept_dir,omitempty"`
-	LastUpdated   time.Time `json:"last_updated"`
+	ScenarioPath  string            `json:"scenario_path"`
+	ScenarioHash  string            `json:"scenario_hash"`
+	CurrentStep   int               `json:"current_step"`
+	TotalSteps    int               `json:"total_steps"`
+	StepCounts    []int             `json:"step_counts,omitempty"`
+	ConsumedSteps []bool            `json:"consumed_steps,omitempty"` // deprecated: read-only migration
+	ActiveGroup   *int              `json:"active_group,omitempty"`
+	InterceptDir  string            `json:"intercept_dir,omitempty"`
+	LastUpdated   time.Time         `json:"last_updated"`
+	Captures      map[string]string `json:"captures,omitempty"`
 }
 
 // IsInGroup returns true if the state is currently inside a step group.
@@ -318,6 +320,100 @@ func NewState(scenarioPath, scenarioHash string, totalSteps int) *State {
 		CurrentStep:  0,
 		TotalSteps:   totalSteps,
 		StepCounts:   make([]int, totalSteps),
+		Captures:     make(map[string]string),
 		LastUpdated:  time.Now().UTC(),
 	}
+}
+
+// CleanExpiredSessions scans a .cli-replay/ directory for state files older
+// than the given TTL. For each expired state file, it removes the associated
+// intercept directory (if any) and the state file itself.
+// Returns the number of cleaned sessions and any error.
+// Files with last_updated in the future are treated as active (with a warning
+// written to stderr if warnWriter is non-nil).
+// Permission errors on individual files are logged and skipped.
+func CleanExpiredSessions(cliReplayDir string, ttl time.Duration, warnWriter io.Writer) (int, error) {
+	entries, err := os.ReadDir(cliReplayDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to read directory %s: %w", cliReplayDir, err)
+	}
+
+	now := time.Now().UTC()
+	cleaned := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Only process state files matching cli-replay-*.state
+		if !isStateFile(name) {
+			continue
+		}
+
+		stateFile := filepath.Join(cliReplayDir, name)
+		state, readErr := ReadState(stateFile)
+		if readErr != nil {
+			if warnWriter != nil {
+				fmt.Fprintf(warnWriter, "cli-replay: warning: could not read state file %s: %v\n", name, readErr)
+			}
+			continue
+		}
+
+		// Edge Case 1: future last_updated — warn and treat as active
+		if state.LastUpdated.After(now) {
+			if warnWriter != nil {
+				fmt.Fprintf(warnWriter, "cli-replay: warning: state file %s has future last_updated (%s), treating as active\n",
+					name, state.LastUpdated.Format(time.RFC3339))
+			}
+			continue
+		}
+
+		age := now.Sub(state.LastUpdated)
+		if age <= ttl {
+			continue // active session
+		}
+
+		// Expired — remove intercept dir if present
+		if state.InterceptDir != "" {
+			if removeErr := os.RemoveAll(state.InterceptDir); removeErr != nil {
+				if warnWriter != nil {
+					fmt.Fprintf(warnWriter, "cli-replay: warning: failed to remove intercept dir %s: %v\n",
+						state.InterceptDir, removeErr)
+				}
+				// Continue to try removing the state file anyway
+			}
+		}
+
+		// Remove state file
+		if removeErr := os.Remove(stateFile); removeErr != nil {
+			if os.IsNotExist(removeErr) {
+				// Already removed (race condition) — count it
+				cleaned++
+				continue
+			}
+			if warnWriter != nil {
+				fmt.Fprintf(warnWriter, "cli-replay: warning: failed to remove state file %s: %v\n",
+					name, removeErr)
+			}
+			continue // Edge Case 3: permission error → skip
+		}
+
+		cleaned++
+	}
+
+	return cleaned, nil
+}
+
+// isStateFile returns true if the filename matches cli-replay-*.state pattern.
+func isStateFile(name string) bool {
+	const prefix = "cli-replay-"
+	const suffix = ".state"
+	if len(name) <= len(prefix)+len(suffix) {
+		return false
+	}
+	return name[:len(prefix)] == prefix && filepath.Ext(name) == suffix
 }

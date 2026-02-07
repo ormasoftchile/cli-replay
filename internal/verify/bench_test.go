@@ -12,7 +12,14 @@ import (
 // benchResult constructs a representative VerifyResult for benchmarking.
 // It simulates a 10-step scenario with groups, matching real-world usage.
 func benchResult() *VerifyResult {
-	steps := make([]scenario.Step, 10)
+	return benchResultN(10)
+}
+
+// benchResultN constructs a parametric VerifyResult with n steps and
+// proportional groups. For n >= 10, two groups are created covering ~30%
+// and ~20% of the steps respectively.
+func benchResultN(n int) *VerifyResult {
+	steps := make([]scenario.Step, n)
 	for i := range steps {
 		steps[i] = scenario.Step{
 			Match: scenario.Match{
@@ -21,15 +28,37 @@ func benchResult() *VerifyResult {
 		}
 	}
 
-	state := runner.NewState("/tmp/bench.yaml", "abc123", 10)
-	state.StepCounts = make([]int, 10)
+	state := runner.NewState("/tmp/bench.yaml", "abc123", n)
+	state.StepCounts = make([]int, n)
 	for i := range state.StepCounts {
 		state.StepCounts[i] = 1
 	}
 
-	groupRanges := []scenario.GroupRange{
-		{Start: 2, End: 5, Name: "pre-flight", TopIndex: 1},
-		{Start: 7, End: 9, Name: "cleanup", TopIndex: 5},
+	// Create groups proportional to step count
+	var groupRanges []scenario.GroupRange
+	if n >= 10 {
+		g1Start := n / 5       // 20% mark
+		g1End := g1Start + n/3 // ~33% of steps
+		if g1End > n {
+			g1End = n
+		}
+		groupRanges = append(groupRanges, scenario.GroupRange{
+			Start: g1Start, End: g1End, Name: "pre-flight", TopIndex: 1,
+		})
+
+		g2Start := n * 7 / 10 // 70% mark
+		g2End := g2Start + n/5
+		if g2End > n {
+			g2End = n
+		}
+		if g2Start < g1End {
+			g2Start = g1End + 1
+		}
+		if g2Start < n && g2End > g2Start {
+			groupRanges = append(groupRanges, scenario.GroupRange{
+				Start: g2Start, End: g2End, Name: "cleanup", TopIndex: 5,
+			})
+		}
 	}
 
 	return BuildResult("bench-scenario", "default", steps, state, groupRanges)
@@ -84,6 +113,33 @@ func BenchmarkBuildResult(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		BuildResult("bench-scenario", "default", steps, state, groupRanges)
+	}
+}
+
+// BenchmarkFormatJSON_200 measures JSON formatting overhead at 200 steps.
+func BenchmarkFormatJSON_200(b *testing.B) {
+	result := benchResultN(200)
+	var buf bytes.Buffer
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		_ = FormatJSON(&buf, result)
+	}
+}
+
+// BenchmarkFormatJUnit_200 measures JUnit XML formatting overhead at 200 steps.
+func BenchmarkFormatJUnit_200(b *testing.B) {
+	result := benchResultN(200)
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	var buf bytes.Buffer
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		_ = FormatJUnit(&buf, result, "/tmp/bench.yaml", ts)
 	}
 }
 

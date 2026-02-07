@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
 	"github.com/cli-replay/cli-replay/internal/scenario"
@@ -18,6 +19,7 @@ import (
 
 var runShellFlag string
 var allowedCommandsFlag string
+var runDryRunFlag bool
 
 var runCmd = &cobra.Command{
 	Use:   "run <scenario.yaml>",
@@ -43,10 +45,11 @@ detected from the PSModulePath (PowerShell) or SHELL environment variable.`,
 func init() { //nolint:gochecknoinits // Standard cobra pattern
 	runCmd.Flags().StringVar(&runShellFlag, "shell", "", "Output format: powershell, bash, cmd (auto-detected if omitted)")
 	runCmd.Flags().StringVar(&allowedCommandsFlag, "allowed-commands", "", "Comma-separated list of commands allowed to be intercepted")
+	runCmd.Flags().BoolVar(&runDryRunFlag, "dry-run", false, "Preview the scenario step sequence without creating intercepts")
 	rootCmd.AddCommand(runCmd)
 }
 
-func runRun(_ *cobra.Command, args []string) error {
+func runRun(cmd *cobra.Command, args []string) error {
 	scenarioPath := args[0]
 
 	absPath, err := filepath.Abs(scenarioPath)
@@ -69,6 +72,24 @@ func runRun(_ *cobra.Command, args []string) error {
 	// Validate allowlist before creating intercepts (T036)
 	if err := checkAllowlist(scn); err != nil {
 		return err
+	}
+
+	// Dry-run mode: preview scenario and exit without side effects
+	if runDryRunFlag {
+		report := runner.BuildDryRunReport(scn)
+		return runner.FormatDryRunReport(report, cmd.OutOrStdout())
+	}
+
+	// T018: TTL cleanup at session startup
+	if scn.Meta.Session != nil && scn.Meta.Session.TTL != "" {
+		ttl, parseErr := time.ParseDuration(scn.Meta.Session.TTL)
+		if parseErr == nil && ttl > 0 {
+			cliReplayDir := filepath.Join(filepath.Dir(absPath), ".cli-replay")
+			cleaned, _ := runner.CleanExpiredSessions(cliReplayDir, ttl, os.Stderr)
+			if cleaned > 0 {
+				fmt.Fprintf(os.Stderr, "cli-replay: cleaned %d expired sessions\n", cleaned)
+			}
+		}
 	}
 
 	// Calculate scenario hash for state tracking

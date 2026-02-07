@@ -127,3 +127,230 @@ func TestRender_QuotedValues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Hello \"world\"", result)
 }
+
+// T008/T011: MergeVarsFiltered tests
+
+func TestMergeVarsFiltered_NoPatternsAsExistingBehavior(t *testing.T) {
+	vars := map[string]string{"cluster": "dev", "namespace": "default"}
+
+	require.NoError(t, os.Setenv("cluster", "prod-override"))
+	defer func() { _ = os.Unsetenv("cluster") }()
+
+	merged, denied := MergeVarsFiltered(vars, nil)
+	assert.Equal(t, "prod-override", merged["cluster"])
+	assert.Equal(t, "default", merged["namespace"])
+	assert.Empty(t, denied)
+}
+
+func TestMergeVarsFiltered_EmptyPatternsAsExistingBehavior(t *testing.T) {
+	vars := map[string]string{"cluster": "dev"}
+
+	require.NoError(t, os.Setenv("cluster", "prod"))
+	defer func() { _ = os.Unsetenv("cluster") }()
+
+	merged, denied := MergeVarsFiltered(vars, []string{})
+	assert.Equal(t, "prod", merged["cluster"])
+	assert.Empty(t, denied)
+}
+
+func TestMergeVarsFiltered_DeniedVarKeepsOriginal(t *testing.T) {
+	vars := map[string]string{"AWS_KEY": "yaml-default", "HOME": "yaml-home"}
+
+	require.NoError(t, os.Setenv("AWS_KEY", "real-secret"))
+	require.NoError(t, os.Setenv("HOME", "/real/home"))
+	defer func() {
+		_ = os.Unsetenv("AWS_KEY")
+		_ = os.Unsetenv("HOME")
+	}()
+
+	merged, denied := MergeVarsFiltered(vars, []string{"AWS_*"})
+
+	// AWS_KEY denied → keeps yaml-default
+	assert.Equal(t, "yaml-default", merged["AWS_KEY"])
+	// HOME not denied → gets env override
+	assert.Equal(t, "/real/home", merged["HOME"])
+	// Denied list should contain AWS_KEY
+	assert.Contains(t, denied, "AWS_KEY")
+	assert.Len(t, denied, 1)
+}
+
+func TestMergeVarsFiltered_DenyAllWildcard(t *testing.T) {
+	vars := map[string]string{
+		"SECRET":    "base-secret",
+		"NAMESPACE": "base-ns",
+	}
+
+	require.NoError(t, os.Setenv("SECRET", "real-secret"))
+	require.NoError(t, os.Setenv("NAMESPACE", "real-ns"))
+	defer func() {
+		_ = os.Unsetenv("SECRET")
+		_ = os.Unsetenv("NAMESPACE")
+	}()
+
+	merged, denied := MergeVarsFiltered(vars, []string{"*"})
+
+	// All denied → keeps base values
+	assert.Equal(t, "base-secret", merged["SECRET"])
+	assert.Equal(t, "base-ns", merged["NAMESPACE"])
+	assert.Len(t, denied, 2)
+}
+
+func TestMergeVarsFiltered_ExemptVarsNotDenied(t *testing.T) {
+	vars := map[string]string{
+		"CLI_REPLAY_SESSION": "base-session",
+		"SOME_VAR":           "base-val",
+	}
+
+	require.NoError(t, os.Setenv("CLI_REPLAY_SESSION", "real-session"))
+	require.NoError(t, os.Setenv("SOME_VAR", "real-val"))
+	defer func() {
+		_ = os.Unsetenv("CLI_REPLAY_SESSION")
+		_ = os.Unsetenv("SOME_VAR")
+	}()
+
+	merged, denied := MergeVarsFiltered(vars, []string{"*"})
+
+	// CLI_REPLAY_SESSION is exempt — gets env override even with deny-all
+	assert.Equal(t, "real-session", merged["CLI_REPLAY_SESSION"])
+	// SOME_VAR is denied
+	assert.Equal(t, "base-val", merged["SOME_VAR"])
+	assert.Contains(t, denied, "SOME_VAR")
+	assert.NotContains(t, denied, "CLI_REPLAY_SESSION")
+}
+
+func TestMergeVarsFiltered_NoEnvVarPresent(t *testing.T) {
+	// Env vars with unique names that won't exist
+	vars := map[string]string{"XYZZY_UNIQUE_VAR_123": "base-val"}
+
+	merged, denied := MergeVarsFiltered(vars, []string{"*"})
+
+	// No env var present → base value preserved, not "denied" since nothing was suppressed
+	assert.Equal(t, "base-val", merged["XYZZY_UNIQUE_VAR_123"])
+	assert.Empty(t, denied)
+}
+
+func TestMergeVarsFiltered_MultiplePatterns(t *testing.T) {
+	vars := map[string]string{
+		"AWS_KEY":      "aws-default",
+		"GITHUB_TOKEN": "gh-default",
+		"DB_SECRET":    "db-default",
+		"NORMAL_VAR":   "normal-default",
+	}
+
+	require.NoError(t, os.Setenv("AWS_KEY", "aws-real"))
+	require.NoError(t, os.Setenv("GITHUB_TOKEN", "gh-real"))
+	require.NoError(t, os.Setenv("DB_SECRET", "db-real"))
+	require.NoError(t, os.Setenv("NORMAL_VAR", "normal-real"))
+	defer func() {
+		_ = os.Unsetenv("AWS_KEY")
+		_ = os.Unsetenv("GITHUB_TOKEN")
+		_ = os.Unsetenv("DB_SECRET")
+		_ = os.Unsetenv("NORMAL_VAR")
+	}()
+
+	merged, denied := MergeVarsFiltered(vars, []string{"AWS_*", "GITHUB_TOKEN", "*_SECRET"})
+
+	assert.Equal(t, "aws-default", merged["AWS_KEY"])
+	assert.Equal(t, "gh-default", merged["GITHUB_TOKEN"])
+	assert.Equal(t, "db-default", merged["DB_SECRET"])
+	assert.Equal(t, "normal-real", merged["NORMAL_VAR"])
+	assert.Len(t, denied, 3)
+}
+
+func TestMergeVarsFiltered_NilVars(t *testing.T) {
+	merged, denied := MergeVarsFiltered(nil, []string{"*"})
+	assert.NotNil(t, merged)
+	assert.Empty(t, merged)
+	assert.Empty(t, denied)
+}
+
+// T015: RenderWithCaptures tests
+
+func TestRenderWithCaptures_BasicCapture(t *testing.T) {
+	vars := map[string]string{"region": "eastus"}
+	captures := map[string]string{"vm_id": "vm-123", "rg_id": "rg-456"}
+
+	result, err := RenderWithCaptures("VM={{ .capture.vm_id }} RG={{ .capture.rg_id }} R={{ .region }}", vars, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "VM=vm-123 RG=rg-456 R=eastus", result)
+}
+
+func TestRenderWithCaptures_UndefinedCapture_ResolvesToEmpty(t *testing.T) {
+	vars := map[string]string{"region": "eastus"}
+	captures := map[string]string{}
+
+	result, err := RenderWithCaptures("VM=[{{ .capture.vm_id }}] R={{ .region }}", vars, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "VM=[] R=eastus", result)
+}
+
+func TestRenderWithCaptures_NilCaptures(t *testing.T) {
+	vars := map[string]string{"name": "test"}
+
+	result, err := RenderWithCaptures("Hello {{ .name }}, cap=[{{ .capture.x }}]", vars, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Hello test, cap=[]", result)
+}
+
+func TestRenderWithCaptures_EmptyTemplate(t *testing.T) {
+	result, err := RenderWithCaptures("", nil, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+func TestRenderWithCaptures_NoCaptureRefs(t *testing.T) {
+	vars := map[string]string{"cluster": "prod"}
+
+	result, err := RenderWithCaptures("Cluster={{ .cluster }}", vars, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Cluster=prod", result)
+}
+
+func TestRenderWithCaptures_OnlyCaptureRefs(t *testing.T) {
+	captures := map[string]string{"pod_name": "web-0"}
+
+	result, err := RenderWithCaptures("Pod={{ .capture.pod_name }}", nil, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "Pod=web-0", result)
+}
+
+func TestRenderWithCaptures_MultilineTemplate(t *testing.T) {
+	vars := map[string]string{"ns": "prod"}
+	captures := map[string]string{"pod": "web-0", "status": "Running"}
+
+	tmpl := `NAMESPACE: {{ .ns }}
+POD: {{ .capture.pod }}
+STATUS: {{ .capture.status }}`
+
+	result, err := RenderWithCaptures(tmpl, vars, captures)
+	require.NoError(t, err)
+	expected := "NAMESPACE: prod\nPOD: web-0\nSTATUS: Running"
+	assert.Equal(t, expected, result)
+}
+
+func TestRenderWithCaptures_InvalidTemplate(t *testing.T) {
+	_, err := RenderWithCaptures("{{ .capture.x", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse")
+}
+
+func TestRenderWithCaptures_CaptureDoesNotOverrideVar(t *testing.T) {
+	// If a var key "capture" exists, the capture map takes precedence
+	// because we set data["capture"] after vars
+	vars := map[string]string{"capture": "should-be-overridden"}
+	captures := map[string]string{"x": "value"}
+
+	result, err := RenderWithCaptures("{{ .capture.x }}", vars, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "value", result)
+}
+
+func TestRenderWithCaptures_SpecialCharsInCaptureValue(t *testing.T) {
+	captures := map[string]string{
+		"path": "/usr/local/bin:$HOME",
+	}
+
+	result, err := RenderWithCaptures("PATH={{ .capture.path }}", nil, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "PATH=/usr/local/bin:$HOME", result)
+}

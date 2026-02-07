@@ -859,3 +859,214 @@ steps:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already complete")
 }
+
+// T017: Integration tests for User Story 1 (deny env vars)
+
+func TestReplayResponseWithTemplate_DeniedEnvVarEmptyString(t *testing.T) {
+	// Denied env var with no meta.vars base → renders as empty string
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "deny-test",
+			Vars: map[string]string{"AWS_KEY": ""},
+			Security: &scenario.Security{
+				DenyEnvVars: []string{"AWS_*"},
+			},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "key={{ .AWS_KEY }}|end"},
+	}
+
+	t.Setenv("AWS_KEY", "real-secret-value")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "key=|end", stdout.String())
+}
+
+func TestReplayResponseWithTemplate_AllowedEnvVarRealValue(t *testing.T) {
+	// Allowed env var → renders with real env value
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "allow-test",
+			Vars: map[string]string{"HOME_VAR": "default"},
+			Security: &scenario.Security{
+				DenyEnvVars: []string{"AWS_*"},
+			},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "home={{ .HOME_VAR }}"},
+	}
+
+	t.Setenv("HOME_VAR", "/real/home")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "home=/real/home", stdout.String())
+}
+
+func TestReplayResponseWithTemplate_NoSecurityPassthrough(t *testing.T) {
+	// No security section → env vars pass through normally (backward compat)
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "no-sec-test",
+			Vars: map[string]string{"MY_VAR": "default"},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "val={{ .MY_VAR }}"},
+	}
+
+	t.Setenv("MY_VAR", "env-override")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "val=env-override", stdout.String())
+}
+
+func TestReplayResponseWithTemplate_WildcardDenyAll(t *testing.T) {
+	// Deny-all with "*" — all env overrides suppressed
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "deny-all-test",
+			Vars: map[string]string{
+				"VAR_A": "base-a",
+				"VAR_B": "base-b",
+			},
+			Security: &scenario.Security{
+				DenyEnvVars: []string{"*"},
+			},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "a={{ .VAR_A }} b={{ .VAR_B }}"},
+	}
+
+	t.Setenv("VAR_A", "env-a")
+	t.Setenv("VAR_B", "env-b")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "a=base-a b=base-b", stdout.String())
+}
+
+func TestReplayResponseWithTemplate_GlobPatterns(t *testing.T) {
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "glob-test",
+			Vars: map[string]string{
+				"AWS_KEY":      "base-aws",
+				"GITHUB_TOKEN": "base-gh",
+				"NORMAL":       "base-normal",
+			},
+			Security: &scenario.Security{
+				DenyEnvVars: []string{"AWS_*", "GITHUB_TOKEN"},
+			},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "{{ .AWS_KEY }}|{{ .GITHUB_TOKEN }}|{{ .NORMAL }}"},
+	}
+
+	t.Setenv("AWS_KEY", "env-aws")
+	t.Setenv("GITHUB_TOKEN", "env-gh")
+	t.Setenv("NORMAL", "env-normal")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	// AWS_KEY and GITHUB_TOKEN denied → base values; NORMAL allowed → env value
+	assert.Equal(t, "base-aws|base-gh|env-normal", stdout.String())
+}
+
+func TestReplayResponseWithTemplate_DenyWithTrace(t *testing.T) {
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "trace-deny-test",
+			Vars: map[string]string{"SECRET": "base"},
+			Security: &scenario.Security{
+				DenyEnvVars: []string{"SECRET"},
+			},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "{{ .SECRET }}"},
+	}
+
+	t.Setenv("SECRET", "real-secret")
+	t.Setenv("CLI_REPLAY_TRACE", "1")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "base", stdout.String())
+	assert.Contains(t, stderr.String(), "cli-replay[trace]: denied env var SECRET")
+}
+
+func TestReplayResponseWithTemplate_DenyPreservesMetaVarsValue(t *testing.T) {
+	// When a denied var has a base value in meta.vars, it keeps that value
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "preserve-test",
+			Vars: map[string]string{"AWS_KEY": "safe-default-value"},
+			Security: &scenario.Security{
+				DenyEnvVars: []string{"AWS_*"},
+			},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "key={{ .AWS_KEY }}"},
+	}
+
+	t.Setenv("AWS_KEY", "real-secret")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	assert.Equal(t, "key=safe-default-value", stdout.String())
+}
+
+// T033: Composability test — both deny_env_vars and session.ttl configured simultaneously.
+func TestReplayResponseWithTemplate_DenyAndSessionTTL_Composability(t *testing.T) {
+	scn := &scenario.Scenario{
+		Meta: scenario.Meta{
+			Name: "composability-test",
+			Vars: map[string]string{"cluster": "prod"},
+			Security: &scenario.Security{
+				DenyEnvVars: []string{"SECRET_*"},
+			},
+			Session: &scenario.Session{
+				TTL: "10m",
+			},
+		},
+	}
+	step := &scenario.Step{
+		Match:   scenario.Match{Argv: []string{"cmd"}},
+		Respond: scenario.Response{Exit: 0, Stdout: "cluster={{ .cluster }}"},
+	}
+
+	// Set env vars — SECRET_TOKEN should be denied, but cluster should work
+	t.Setenv("SECRET_TOKEN", "super-secret")
+	t.Setenv("cluster", "override-cluster")
+
+	var stdout, stderr bytes.Buffer
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
+	assert.Equal(t, 0, exitCode)
+	// cluster is NOT denied, env override applies
+	assert.Equal(t, "cluster=override-cluster", stdout.String())
+	// Verify session TTL is parseable (model validation)
+	assert.NotNil(t, scn.Meta.Session)
+	assert.Equal(t, "10m", scn.Meta.Session.TTL)
+}

@@ -1,0 +1,18 @@
+meta:
+  name: capture-forward-ref
+  description: Step 1 references a capture that is first defined in step 2 (forward reference)
+
+steps:
+  - match:
+      argv: ["az", "vm", "show"]
+    respond:
+      exit: 0
+      stdout: 'vm={{ .capture.vm_id }}'
+
+  - match:
+      argv: ["az", "vm", "create"]
+    respond:
+      exit: 0
+      stdout: '{"id": "vm-1"}'
+      capture:
+        vm_id: "vm-1"

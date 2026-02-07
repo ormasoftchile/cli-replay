@@ -49,6 +49,20 @@
         },
         "security": {
           "$ref": "#/definitions/security"
+        },
+        "session": {
+          "type": "object",
+          "description": "Session lifecycle configuration.",
+          "markdownDescription": "Session lifecycle configuration.",
+          "additionalProperties": false,
+          "properties": {
+            "ttl": {
+              "type": "string",
+              "description": "Time-to-live for replay sessions. Sessions older than this are auto-cleaned. Go duration format (e.g., '5m', '1h', '30s').",
+              "markdownDescription": "Time-to-live for replay sessions. Sessions older than this are auto-cleaned. Go duration format (e.g., `5m`, `1h`, `30s`).",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)+$"
+            }
+          }
         }
       }
     },
@@ -64,6 +78,15 @@
           "markdownDescription": "Allowlist of command names that may be intercepted. When set, only these commands will have shims created.",
           "items": {
             "type": "string"
+          }
+        },
+        "deny_env_vars": {
+          "type": "array",
+          "description": "Deny-list of environment variable name patterns. Matching vars are replaced with empty strings in template rendering. Supports glob patterns (* wildcard).",
+          "markdownDescription": "Deny-list of environment variable name patterns. Matching vars have their env overrides suppressed in template rendering. Supports glob patterns (`*` wildcard).",
+          "items": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

@@ -497,3 +497,106 @@ steps:
 		})
 	}
 }
+
+// T022: Validation loading tests for capture conflict and forward reference scenarios.
+
+func TestLoad_CaptureConflict_ValidationError(t *testing.T) {
+	yamlContent := `
+meta:
+  name: capture-conflict
+  vars:
+    region: "eastus"
+steps:
+  - match:
+      argv: ["cmd"]
+    respond:
+      exit: 0
+      stdout: "done"
+      capture:
+        region: "westus"
+`
+	_, err := Load(strings.NewReader(yamlContent))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "region")
+	assert.Contains(t, err.Error(), "conflicts")
+}
+
+func TestLoad_CaptureForwardRef_ValidationError(t *testing.T) {
+	yamlContent := `
+meta:
+  name: capture-forward-ref
+steps:
+  - match:
+      argv: ["cmd"]
+    respond:
+      exit: 0
+      stdout: 'hello {{ .capture.vm_id }}'
+  - match:
+      argv: ["cmd2"]
+    respond:
+      exit: 0
+      stdout: "world"
+      capture:
+        vm_id: "vm-123"
+`
+	_, err := Load(strings.NewReader(yamlContent))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "vm_id")
+	assert.Contains(t, err.Error(), "forward")
+}
+
+func TestLoad_CaptureValid_NoError(t *testing.T) {
+	yamlContent := `
+meta:
+  name: capture-valid
+steps:
+  - match:
+      argv: ["cmd"]
+    respond:
+      exit: 0
+      stdout: "first"
+      capture:
+        rg_id: "rg-123"
+  - match:
+      argv: ["cmd2"]
+    respond:
+      exit: 0
+      stdout: 'rg={{ .capture.rg_id }}'
+`
+	scn, err := Load(strings.NewReader(yamlContent))
+	require.NoError(t, err)
+	assert.Equal(t, "capture-valid", scn.Meta.Name)
+	assert.Equal(t, "rg-123", scn.Steps[0].Step.Respond.Capture["rg_id"])
+}
+
+func TestLoad_CaptureInGroup_Valid(t *testing.T) {
+	yamlContent := `
+meta:
+  name: capture-group-valid
+steps:
+  - match:
+      argv: ["setup"]
+    respond:
+      exit: 0
+      capture:
+        base_id: "base-123"
+  - group:
+      mode: unordered
+      name: work
+      steps:
+        - match:
+            argv: ["a"]
+          respond:
+            exit: 0
+            capture:
+              x: "value-x"
+        - match:
+            argv: ["b"]
+          respond:
+            exit: 0
+            stdout: 'base={{ .capture.base_id }}'
+`
+	scn, err := Load(strings.NewReader(yamlContent))
+	require.NoError(t, err)
+	assert.Equal(t, "capture-group-valid", scn.Meta.Name)
+}

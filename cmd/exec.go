@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
@@ -19,6 +17,7 @@ import (
 var execAllowedCommandsFlag string
 var execFormatFlag string
 var execReportFileFlag string
+var execDryRunFlag bool
 
 var execCmd = &cobra.Command{
 	Use:   "exec [flags] <scenario.yaml> -- <command> [args...]",
@@ -53,6 +52,7 @@ func init() { //nolint:gochecknoinits // Standard cobra pattern
 	execCmd.Flags().StringVar(&execAllowedCommandsFlag, "allowed-commands", "", "Comma-separated list of commands allowed to be intercepted")
 	execCmd.Flags().StringVar(&execFormatFlag, "format", "", "Output format for verification report: json or junit")
 	execCmd.Flags().StringVar(&execReportFileFlag, "report-file", "", "Write verification report to file instead of stderr")
+	execCmd.Flags().BoolVar(&execDryRunFlag, "dry-run", false, "Preview the scenario without spawning a child process")
 	rootCmd.AddCommand(execCmd)
 }
 
@@ -135,6 +135,24 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Dry-run mode: preview scenario and exit without side effects
+	if execDryRunFlag {
+		report := runner.BuildDryRunReport(scn)
+		return runner.FormatDryRunReport(report, cmd.OutOrStdout())
+	}
+
+	// T019: TTL cleanup at session startup
+	if scn.Meta.Session != nil && scn.Meta.Session.TTL != "" {
+		ttl, parseErr := time.ParseDuration(scn.Meta.Session.TTL)
+		if parseErr == nil && ttl > 0 {
+			cliReplayDir := filepath.Join(filepath.Dir(absPath), ".cli-replay")
+			cleaned, _ := runner.CleanExpiredSessions(cliReplayDir, ttl, os.Stderr)
+			if cleaned > 0 {
+				fmt.Fprintf(os.Stderr, "cli-replay: cleaned %d expired sessions\n", cleaned)
+			}
+		}
+	}
+
 	// --- Phase 2: Setup ---
 
 	scenarioHash := hashScenarioFile(absPath)
@@ -204,30 +222,18 @@ func runExec(cmd *cobra.Command, args []string) error {
 	childCmd.Stdout = os.Stdout
 	childCmd.Stderr = os.Stderr
 
-	// Set up signal forwarding
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	// Set up signal forwarding (platform-specific: see exec_unix.go / exec_windows.go)
+	cleanupSignals := setupSignalForwarding(childCmd)
 
 	if err := childCmd.Start(); err != nil {
-		signal.Stop(sigCh)
-		close(sigCh)
+		cleanupSignals()
 		// Determine exit code: command not found = 127, not executable = 126
 		ExecExitCode = exitCodeForStartError(err)
 		return fmt.Errorf("failed to start child process: %w", err)
 	}
 
-	// Forward signals to child
-	go func() {
-		for sig := range sigCh {
-			if childCmd.Process != nil {
-				_ = childCmd.Process.Signal(sig) // safe if already dead
-			}
-		}
-	}()
-
 	waitErr := childCmd.Wait()
-	signal.Stop(sigCh)
-	close(sigCh)
+	cleanupSignals()
 
 	childExitCode := runner.ExitCodeFromError(waitErr)
 

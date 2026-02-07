@@ -1,0 +1,26 @@
+meta:
+  name: capture-chain
+  description: 3-step capture chain where step 3 references captures from steps 1 and 2
+
+steps:
+  - match:
+      argv: ["az", "group", "create", "--name", "demo-rg"]
+    respond:
+      exit: 0
+      stdout: '{"id": "/subscriptions/abc/resourceGroups/demo-rg", "name": "demo-rg"}'
+      capture:
+        rg_id: "/subscriptions/abc/resourceGroups/demo-rg"
+
+  - match:
+      argv: ["az", "vm", "create", "--resource-group", "demo-rg"]
+    respond:
+      exit: 0
+      stdout: '{"id": "/subscriptions/abc/vms/vm-1", "name": "vm-1"}'
+      capture:
+        vm_id: "/subscriptions/abc/vms/vm-1"
+
+  - match:
+      argv: ["az", "vm", "show", "--ids"]
+    respond:
+      exit: 0
+      stdout: 'rg={{ .capture.rg_id }} vm={{ .capture.vm_id }}'
