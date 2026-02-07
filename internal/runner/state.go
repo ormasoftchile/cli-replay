@@ -13,18 +13,57 @@ import (
 
 // State tracks scenario progress across CLI invocations.
 type State struct {
-	ScenarioPath string    `json:"scenario_path"`
-	ScenarioHash string    `json:"scenario_hash"`
-	CurrentStep  int       `json:"current_step"`
-	TotalSteps   int       `json:"total_steps"`
-	InterceptDir string    `json:"intercept_dir,omitempty"`
-	LastUpdated  time.Time `json:"last_updated"`
+	ScenarioPath  string    `json:"scenario_path"`
+	ScenarioHash  string    `json:"scenario_hash"`
+	CurrentStep   int       `json:"current_step"`
+	TotalSteps    int       `json:"total_steps"`
+	ConsumedSteps []bool    `json:"consumed_steps,omitempty"`
+	InterceptDir  string    `json:"intercept_dir,omitempty"`
+	LastUpdated   time.Time `json:"last_updated"`
 }
 
-// Advance increments the current step counter.
+// Advance increments the current step counter and marks the step as consumed.
 func (s *State) Advance() {
+	if s.ConsumedSteps != nil && s.CurrentStep < len(s.ConsumedSteps) {
+		s.ConsumedSteps[s.CurrentStep] = true
+	}
 	s.CurrentStep++
 	s.LastUpdated = time.Now().UTC()
+}
+
+// AdvanceStep marks a specific step index as consumed (for out-of-order consumption).
+func (s *State) AdvanceStep(idx int) {
+	if s.ConsumedSteps == nil {
+		s.ConsumedSteps = make([]bool, s.TotalSteps)
+	}
+	if idx >= 0 && idx < len(s.ConsumedSteps) {
+		s.ConsumedSteps[idx] = true
+	}
+	s.LastUpdated = time.Now().UTC()
+}
+
+// AllStepsConsumed returns true if every step has been consumed.
+func (s *State) AllStepsConsumed() bool {
+	if s.ConsumedSteps == nil {
+		return s.CurrentStep >= s.TotalSteps
+	}
+	for _, c := range s.ConsumedSteps {
+		if !c {
+			return false
+		}
+	}
+	return true
+}
+
+// IsStepConsumed returns true if the step at the given index has been consumed.
+func (s *State) IsStepConsumed(idx int) bool {
+	if s.ConsumedSteps == nil {
+		return idx < s.CurrentStep
+	}
+	if idx < 0 || idx >= len(s.ConsumedSteps) {
+		return false
+	}
+	return s.ConsumedSteps[idx]
 }
 
 // IsComplete returns true if all steps have been consumed.
@@ -122,10 +161,11 @@ func DeleteState(path string) error {
 // NewState creates a new state for the given scenario.
 func NewState(scenarioPath, scenarioHash string, totalSteps int) *State {
 	return &State{
-		ScenarioPath: scenarioPath,
-		ScenarioHash: scenarioHash,
-		CurrentStep:  0,
-		TotalSteps:   totalSteps,
-		LastUpdated:  time.Now().UTC(),
+		ScenarioPath:  scenarioPath,
+		ScenarioHash:  scenarioHash,
+		CurrentStep:   0,
+		TotalSteps:    totalSteps,
+		ConsumedSteps: make([]bool, totalSteps),
+		LastUpdated:   time.Now().UTC(),
 	}
 }

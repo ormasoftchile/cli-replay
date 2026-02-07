@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Scenario represents a complete test definition loaded from a YAML file.
@@ -49,6 +50,7 @@ func (m *Meta) Validate() error {
 type Step struct {
 	Match   Match    `yaml:"match"`
 	Respond Response `yaml:"respond"`
+	When    string   `yaml:"when,omitempty"`
 }
 
 // Validate checks that the step is valid.
@@ -82,6 +84,23 @@ type Response struct {
 	Stderr     string `yaml:"stderr,omitempty"`
 	StdoutFile string `yaml:"stdout_file,omitempty"`
 	StderrFile string `yaml:"stderr_file,omitempty"`
+	Delay      string `yaml:"delay,omitempty"`
+}
+
+// ValidateDelay checks that the delay does not exceed the given maximum.
+// A zero maxDelay disables the cap. Returns nil if no delay is set.
+func (r *Response) ValidateDelay(maxDelay time.Duration) error {
+	if r.Delay == "" || maxDelay == 0 {
+		return nil
+	}
+	d, err := time.ParseDuration(r.Delay)
+	if err != nil {
+		return fmt.Errorf("invalid delay %q: %w", r.Delay, err)
+	}
+	if d > maxDelay {
+		return fmt.Errorf("delay %s exceeds max-delay %s", r.Delay, maxDelay)
+	}
+	return nil
 }
 
 // Validate checks that the response is valid.
