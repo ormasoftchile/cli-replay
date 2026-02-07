@@ -56,6 +56,12 @@ var ps1ShimTemplate = "# cli-replay shim for: %s\r\n" +
 	"# Capture start time (RFC3339 format)\r\n" +
 	"$timestamp = (Get-Date).ToUniversalTime().ToString(\"yyyy-MM-ddTHH:mm:ssZ\")\r\n" +
 	"\r\n" +
+	"# Capture stdin if piped\r\n" +
+	"$stdinContent = ''\r\n" +
+	"if ([Console]::IsInputRedirected) {\r\n" +
+	"    $stdinContent = [Console]::In.ReadToEnd()\r\n" +
+	"}\r\n" +
+	"\r\n" +
 	"# Execute the real command and capture output\r\n" +
 	"$exitCode = 0\r\n" +
 	"\r\n" +
@@ -69,8 +75,15 @@ var ps1ShimTemplate = "# cli-replay shim for: %s\r\n" +
 	"    $psi.RedirectStandardOutput = $true\r\n" +
 	"    $psi.RedirectStandardError = $true\r\n" +
 	"    $psi.CreateNoWindow = $true\r\n" +
+	"    if ($stdinContent) {\r\n" +
+	"        $psi.RedirectStandardInput = $true\r\n" +
+	"    }\r\n" +
 	"\r\n" +
 	"    $process = [System.Diagnostics.Process]::Start($psi)\r\n" +
+	"    if ($stdinContent) {\r\n" +
+	"        $process.StandardInput.Write($stdinContent)\r\n" +
+	"        $process.StandardInput.Close()\r\n" +
+	"    }\r\n" +
 	"    $stdoutTask = $process.StandardOutput.ReadToEndAsync()\r\n" +
 	"    $stderrTask = $process.StandardError.ReadToEndAsync()\r\n" +
 	"    $process.WaitForExit()\r\n" +
@@ -99,8 +112,13 @@ var ps1ShimTemplate = "# cli-replay shim for: %s\r\n" +
 	"$escStdout = ($stdoutContent -replace '\\\\','\\\\' -replace '\"','\\\"' -replace [char]13+[char]10,'\\n' -replace [char]10,'\\n' -replace [char]13,'\\r' -replace [char]9,'\\t')\r\n" +
 	"$escStderr = ($stderrContent -replace '\\\\','\\\\' -replace '\"','\\\"' -replace [char]13+[char]10,'\\n' -replace [char]10,'\\n' -replace [char]13,'\\r' -replace [char]9,'\\t')\r\n" +
 	"\r\n" +
-	"# Write JSONL entry\r\n" +
-	"$jsonLine = '{\"timestamp\":\"' + $timestamp + '\",\"argv\":' + $argvJson + ',\"exit\":' + $exitCode + ',\"stdout\":\"' + $escStdout + '\",\"stderr\":\"' + $escStderr + '\"}'\r\n" +
+	"# Write JSONL entry (include stdin when non-empty)\r\n" +
+	"if ($stdinContent) {\r\n" +
+	"    $escStdin = ($stdinContent -replace '\\\\','\\\\' -replace '\"','\\\"' -replace [char]13+[char]10,'\\n' -replace [char]10,'\\n' -replace [char]13,'\\r' -replace [char]9,'\\t')\r\n" +
+	"    $jsonLine = '{\"timestamp\":\"' + $timestamp + '\",\"argv\":' + $argvJson + ',\"exit\":' + $exitCode + ',\"stdout\":\"' + $escStdout + '\",\"stderr\":\"' + $escStderr + '\",\"stdin\":\"' + $escStdin + '\"}'\r\n" +
+	"} else {\r\n" +
+	"    $jsonLine = '{\"timestamp\":\"' + $timestamp + '\",\"argv\":' + $argvJson + ',\"exit\":' + $exitCode + ',\"stdout\":\"' + $escStdout + '\",\"stderr\":\"' + $escStderr + '\"}'\r\n" +
+	"}\r\n" +
 	"Add-Content -Path $LogFile -Value $jsonLine -Encoding UTF8 -NoNewline\r\n" +
 	"Add-Content -Path $LogFile -Value ([char]10) -NoNewline\r\n" +
 	"\r\n" +

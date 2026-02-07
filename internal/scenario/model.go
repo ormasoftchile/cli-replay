@@ -36,6 +36,12 @@ type Meta struct {
 	Name        string            `yaml:"name"`
 	Description string            `yaml:"description,omitempty"`
 	Vars        map[string]string `yaml:"vars,omitempty"`
+	Security    *Security         `yaml:"security,omitempty"`
+}
+
+// Security defines constraints on which commands may be intercepted.
+type Security struct {
+	AllowedCommands []string `yaml:"allowed_commands,omitempty"`
 }
 
 // Validate checks that the meta section is valid.
@@ -48,9 +54,40 @@ func (m *Meta) Validate() error {
 
 // Step represents a single command-response pair within a scenario.
 type Step struct {
-	Match   Match    `yaml:"match"`
-	Respond Response `yaml:"respond"`
-	When    string   `yaml:"when,omitempty"`
+	Match   Match       `yaml:"match"`
+	Respond Response    `yaml:"respond"`
+	Calls   *CallBounds `yaml:"calls,omitempty"`
+	When    string      `yaml:"when,omitempty"`
+}
+
+// CallBounds specifies the allowed invocation range for a step.
+// When nil on a Step, EffectiveCalls() returns {Min: 1, Max: 1}.
+type CallBounds struct {
+	Min int `yaml:"min"`
+	Max int `yaml:"max"`
+}
+
+// EffectiveCalls returns the call bounds for this step, applying defaults
+// when the Calls field is nil (backward compatible: exactly one call).
+func (s *Step) EffectiveCalls() CallBounds {
+	if s.Calls == nil {
+		return CallBounds{Min: 1, Max: 1}
+	}
+	return *s.Calls
+}
+
+// Validate checks that the call bounds are valid.
+func (cb *CallBounds) Validate() error {
+	if cb.Min < 0 {
+		return fmt.Errorf("min must be >= 0, got %d", cb.Min)
+	}
+	if cb.Max < 1 {
+		return fmt.Errorf("max must be >= 1, got %d", cb.Max)
+	}
+	if cb.Min > cb.Max {
+		return fmt.Errorf("min (%d) must be <= max (%d)", cb.Min, cb.Max)
+	}
+	return nil
 }
 
 // Validate checks that the step is valid.
@@ -61,12 +98,22 @@ func (s *Step) Validate() error {
 	if err := s.Respond.Validate(); err != nil {
 		return fmt.Errorf("respond: %w", err)
 	}
+	if s.Calls != nil {
+		// Apply defaulting: if only min is given (max == 0), default max to min
+		if s.Calls.Max == 0 && s.Calls.Min > 0 {
+			s.Calls.Max = s.Calls.Min
+		}
+		if err := s.Calls.Validate(); err != nil {
+			return fmt.Errorf("calls: %w", err)
+		}
+	}
 	return nil
 }
 
 // Match contains criteria for identifying an incoming CLI command.
 type Match struct {
-	Argv []string `yaml:"argv"`
+	Argv  []string `yaml:"argv"`
+	Stdin string   `yaml:"stdin,omitempty"`
 }
 
 // Validate checks that the match criteria is valid.

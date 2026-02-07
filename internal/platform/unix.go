@@ -39,12 +39,27 @@ fi
 # Capture start time (RFC3339 format)
 TIMESTAMP=$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)
 
+# Capture stdin if piped (non-TTY)
+STDIN_FILE=""
+STDIN_CONTENT=""
+if [ ! -t 0 ]; then
+    STDIN_FILE=$(mktemp)
+    /bin/cat > "$STDIN_FILE"
+    if [ -s "$STDIN_FILE" ]; then
+        STDIN_CONTENT=$(< "$STDIN_FILE")
+    fi
+fi
+
 # Execute the real command and capture output
 STDOUT_FILE=$(mktemp)
 STDERR_FILE=$(mktemp)
 EXIT_CODE=0
 
-"$REAL_COMMAND" "$@" >"$STDOUT_FILE" 2>"$STDERR_FILE" || EXIT_CODE=$?
+if [ -n "$STDIN_FILE" ] && [ -s "$STDIN_FILE" ]; then
+    "$REAL_COMMAND" "$@" <"$STDIN_FILE" >"$STDOUT_FILE" 2>"$STDERR_FILE" || EXIT_CODE=$?
+else
+    "$REAL_COMMAND" "$@" >"$STDOUT_FILE" 2>"$STDERR_FILE" || EXIT_CODE=$?
+fi
 
 # Read captured output into variables using bash builtins to avoid
 # depending on external 'cat' which might be shimmed
@@ -68,6 +83,7 @@ fi
 
 # Clean up temp files (explicit path to avoid shimming recursion)
 /bin/rm -f "$STDOUT_FILE" "$STDERR_FILE"
+[ -n "$STDIN_FILE" ] && /bin/rm -f "$STDIN_FILE"
 
 # Build argv array for JSON
 ARGV_JSON="[\"%s\""
@@ -81,10 +97,16 @@ ARGV_JSON="$ARGV_JSON]"
 # Escape JSON strings using sed/awk (unlikely to be shimmed)
 ESC_STDOUT=$(printf '%%s' "$STDOUT_CONTENT" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%%s\\n", $0}' | sed 's/\\n$//')
 ESC_STDERR=$(printf '%%s' "$STDERR_CONTENT" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%%s\\n", $0}' | sed 's/\\n$//')
+ESC_STDIN=$(printf '%%s' "$STDIN_CONTENT" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%%s\\n", $0}' | sed 's/\\n$//')
 
-# Write JSONL entry
-printf '{"timestamp":"%%s","argv":%%s,"exit":%%d,"stdout":"%%s","stderr":"%%s"}\n' \
-    "$TIMESTAMP" "$ARGV_JSON" "$EXIT_CODE" "$ESC_STDOUT" "$ESC_STDERR" >> "$LOGFILE"
+# Write JSONL entry (include stdin only when non-empty)
+if [ -n "$STDIN_CONTENT" ]; then
+    printf '{"timestamp":"%%s","argv":%%s,"exit":%%d,"stdout":"%%s","stderr":"%%s","stdin":"%%s"}\n' \
+        "$TIMESTAMP" "$ARGV_JSON" "$EXIT_CODE" "$ESC_STDOUT" "$ESC_STDERR" "$ESC_STDIN" >> "$LOGFILE"
+else
+    printf '{"timestamp":"%%s","argv":%%s,"exit":%%d,"stdout":"%%s","stderr":"%%s"}\n' \
+        "$TIMESTAMP" "$ARGV_JSON" "$EXIT_CODE" "$ESC_STDOUT" "$ESC_STDERR" >> "$LOGFILE"
+fi
 
 exit $EXIT_CODE
 `

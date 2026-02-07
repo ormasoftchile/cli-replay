@@ -1,0 +1,30 @@
+meta:
+  name: stdin-matching
+  description: Scenario with stdin matching for piped input commands
+
+steps:
+  - match:
+      argv: ["kubectl", "apply", "-f", "-"]
+      stdin: |
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: test-pod
+    respond:
+      exit: 0
+      stdout: "pod/test-pod created\n"
+
+  - match:
+      argv: ["cat"]
+      stdin: "hello world\n"
+    respond:
+      exit: 0
+      stdout: "hello world\n"
+
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME       READY   STATUS    RESTARTS   AGE
+        test-pod   1/1     Running   0          5s

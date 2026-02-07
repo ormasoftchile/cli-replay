@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cli-replay/cli-replay/internal/matcher"
 	"github.com/cli-replay/cli-replay/internal/scenario"
@@ -167,27 +168,102 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 			fmt.Errorf("scenario already complete")
 	}
 
-	// Get expected step
+	// Budget-aware step matching
+	// Skip exhausted steps (count >= max), then try matching current step.
+	// If current step doesn't match but its min is met, soft-advance to next step.
 	stepIndex := state.CurrentStep
-	if stepIndex >= len(scn.Steps) {
-		return &ReplayResult{ExitCode: 1}, fmt.Errorf("step index out of range")
+
+	// Phase 1: Skip exhausted steps
+	for stepIndex < len(scn.Steps) {
+		bounds := scn.Steps[stepIndex].EffectiveCalls()
+		if state.StepBudgetRemaining(stepIndex, bounds.Max) > 0 {
+			break
+		}
+		stepIndex++
 	}
+
+	// Update CurrentStep if we skipped exhausted steps
+	if stepIndex > state.CurrentStep {
+		state.CurrentStep = stepIndex
+	}
+
+	if stepIndex >= len(scn.Steps) {
+		_, _ = fmt.Fprintf(stderr, "cli-replay: scenario %q already complete (all %d steps consumed)\n",
+			scn.Meta.Name, state.TotalSteps)
+		return &ReplayResult{ExitCode: 1, ScenarioName: scn.Meta.Name},
+			fmt.Errorf("scenario already complete")
+	}
+
 	expectedStep := &scn.Steps[stepIndex]
 
-	// Match argv
-	if !matcher.ArgvMatch(expectedStep.Match.Argv, argv) {
+	// Phase 2: Try matching current step
+	matched := matcher.ArgvMatch(expectedStep.Match.Argv, argv)
+
+	// Phase 3: Soft-advance if current step doesn't match but min is met
+	softAdvanced := false
+	origStepIndex := stepIndex
+	if !matched {
+		bounds := expectedStep.EffectiveCalls()
+		if state.StepCounts != nil && stepIndex < len(state.StepCounts) &&
+			state.StepCounts[stepIndex] >= bounds.Min && stepIndex+1 < len(scn.Steps) {
+			// Min satisfied — try next step
+			softAdvanced = true
+			stepIndex++
+			state.CurrentStep = stepIndex
+			expectedStep = &scn.Steps[stepIndex]
+			matched = matcher.ArgvMatch(expectedStep.Match.Argv, argv)
+		}
+	}
+
+	if !matched {
 		result := &ReplayResult{
 			ExitCode:     1,
 			Matched:      false,
 			StepIndex:    stepIndex,
 			ScenarioName: scn.Meta.Name,
 		}
-		return result, &MismatchError{
+		mErr := &MismatchError{
 			Scenario:  scn.Meta.Name,
 			StepIndex: stepIndex,
 			Expected:  expectedStep.Match.Argv,
 			Received:  argv,
 		}
+		if softAdvanced {
+			mErr.SoftAdvanced = true
+			mErr.NextStepIndex = stepIndex
+			mErr.NextExpected = expectedStep.Match.Argv
+			// Report against the original step
+			mErr.StepIndex = origStepIndex
+			mErr.Expected = scn.Steps[origStepIndex].Match.Argv
+		}
+		return result, mErr
+	}
+
+	// Increment call count for the matched step
+	state.IncrementStep(stepIndex)
+
+	// stdin matching: if the step defines match.stdin, read actual stdin and compare
+	if expectedStep.Match.Stdin != "" {
+		actualStdin, readErr := readStdin()
+		if readErr != nil {
+			_, _ = fmt.Fprintf(stderr, "cli-replay: failed to read stdin: %v\n", readErr)
+			return &ReplayResult{ExitCode: 1, ScenarioName: scn.Meta.Name}, readErr
+		}
+		if normalizeStdin(actualStdin) != normalizeStdin(expectedStep.Match.Stdin) {
+			return &ReplayResult{ExitCode: 1, ScenarioName: scn.Meta.Name},
+				&StdinMismatchError{
+					Scenario:  scn.Meta.Name,
+					StepIndex: stepIndex,
+					Expected:  expectedStep.Match.Stdin,
+					Received:  actualStdin,
+				}
+		}
+	}
+
+	// Auto-advance CurrentStep if budget is now exhausted
+	bounds := expectedStep.EffectiveCalls()
+	if state.StepBudgetRemaining(stepIndex, bounds.Max) <= 0 {
+		state.CurrentStep = stepIndex + 1
 	}
 
 	// Execute response with template rendering
@@ -198,8 +274,7 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 		WriteTraceOutput(stderr, stepIndex, argv, exitCode)
 	}
 
-	// Advance state
-	state.Advance()
+	// Save state (step count already incremented above, CurrentStep already advanced if needed)
 	if err := WriteState(stateFile, state); err != nil {
 		_, _ = fmt.Fprintf(stderr, "cli-replay: warning: failed to save state: %v\n", err)
 	}
@@ -224,12 +299,46 @@ func hashScenarioFile(path string) string {
 
 // MismatchError represents an argv mismatch during replay.
 type MismatchError struct {
-	Scenario  string
-	StepIndex int
-	Expected  []string
-	Received  []string
+	Scenario      string
+	StepIndex     int
+	Expected      []string
+	Received      []string
+	SoftAdvanced  bool     // true if we tried soft-advancing past a satisfied step
+	NextStepIndex int      // index of the next step tried (when SoftAdvanced)
+	NextExpected  []string // argv of the next step tried (when SoftAdvanced)
 }
 
 func (e *MismatchError) Error() string {
 	return fmt.Sprintf("argv mismatch at step %d", e.StepIndex)
+}
+
+// StdinMismatchError represents a stdin content mismatch during replay.
+type StdinMismatchError struct {
+	Scenario  string
+	StepIndex int
+	Expected  string
+	Received  string
+}
+
+func (e *StdinMismatchError) Error() string {
+	return fmt.Sprintf("stdin mismatch at step %d", e.StepIndex)
+}
+
+// maxStdinBytes is the maximum number of bytes to read from stdin (1 MB).
+const maxStdinBytes = 1 << 20
+
+// readStdin reads stdin content up to maxStdinBytes.
+func readStdin() (string, error) {
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxStdinBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read stdin: %w", err)
+	}
+	return string(data), nil
+}
+
+// normalizeStdin normalizes stdin content for comparison:
+// converts \r\n to \n and trims trailing newlines.
+func normalizeStdin(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.TrimRight(s, "\n")
 }

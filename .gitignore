@@ -43,5 +43,8 @@ Thumbs.db
 dist/
 .gobuild/
 
+# Demo temp files
+.demo-tmp/
+
 # Logs
 *.log

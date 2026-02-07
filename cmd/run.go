@@ -16,6 +16,7 @@ import (
 )
 
 var runShellFlag string
+var allowedCommandsFlag string
 
 var runCmd = &cobra.Command{
 	Use:   "run <scenario.yaml>",
@@ -40,6 +41,7 @@ detected from the PSModulePath (PowerShell) or SHELL environment variable.`,
 
 func init() { //nolint:gochecknoinits // Standard cobra pattern
 	runCmd.Flags().StringVar(&runShellFlag, "shell", "", "Output format: powershell, bash, cmd (auto-detected if omitted)")
+	runCmd.Flags().StringVar(&allowedCommandsFlag, "allowed-commands", "", "Comma-separated list of commands allowed to be intercepted")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -63,13 +65,13 @@ func runRun(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("scenario has no steps with a command name")
 	}
 
-	// Calculate scenario hash for state tracking
-	data, readErr := os.ReadFile(absPath) //nolint:gosec // user-provided path is expected
-	scenarioHash := ""
-	if readErr == nil {
-		h := sha256.Sum256(data)
-		scenarioHash = hex.EncodeToString(h[:])
+	// Validate allowlist before creating intercepts (T036)
+	if err := checkAllowlist(scn); err != nil {
+		return err
 	}
+
+	// Calculate scenario hash for state tracking
+	scenarioHash := hashScenarioFile(absPath)
 
 	// Locate our own binary to create intercepts
 	self, err := os.Executable()
@@ -214,3 +216,104 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
+// checkAllowlist validates that all scenario commands are permitted by the
+// effective allowlist (intersection of YAML and CLI flag lists).
+func checkAllowlist(scn *scenario.Scenario) error {
+	cliList := parseAllowedCommands(allowedCommandsFlag)
+	var yamlList []string
+	if scn.Meta.Security != nil {
+		yamlList = scn.Meta.Security.AllowedCommands
+	}
+	return validateAllowlist(scn, yamlList, cliList)
+}
+
+// hashScenarioFile returns a hex-encoded SHA256 hash of the file content.
+func hashScenarioFile(path string) string {
+	data, err := os.ReadFile(path) //nolint:gosec // user-provided path is expected
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+// parseAllowedCommands splits a comma-separated string into a slice of
+// trimmed, non-empty command names.
+func parseAllowedCommands(flag string) []string {
+	if flag == "" {
+		return nil
+	}
+	parts := strings.Split(flag, ",")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// effectiveAllowlist computes the effective allowlist from YAML and CLI lists.
+// If both are set, returns the intersection. If only one is set, returns that.
+// If neither is set, returns nil (no restrictions).
+func effectiveAllowlist(yamlList, cliList []string) []string {
+	if len(yamlList) == 0 && len(cliList) == 0 {
+		return nil
+	}
+	if len(yamlList) == 0 {
+		return cliList
+	}
+	if len(cliList) == 0 {
+		return yamlList
+	}
+	// Intersection
+	set := make(map[string]bool)
+	for _, c := range yamlList {
+		set[c] = true
+	}
+	var result []string
+	for _, c := range cliList {
+		if set[c] {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// validateAllowlist checks that all commands referenced in scenario steps
+// are present in the effective allowlist. Returns an error for the first
+// disallowed command found. Uses filepath.Base on argv[0] to handle paths.
+// On Windows, comparison is case-insensitive.
+func validateAllowlist(scn *scenario.Scenario, yamlList, cliList []string) error {
+	allowed := effectiveAllowlist(yamlList, cliList)
+	if allowed == nil {
+		return nil // no restrictions
+	}
+
+	// Build lookup set
+	set := make(map[string]bool)
+	for _, c := range allowed {
+		if runtime.GOOS == "windows" {
+			set[strings.ToLower(c)] = true
+		} else {
+			set[c] = true
+		}
+	}
+
+	for i, step := range scn.Steps {
+		if len(step.Match.Argv) == 0 {
+			continue
+		}
+		cmd := filepath.Base(step.Match.Argv[0])
+		lookupCmd := cmd
+		if runtime.GOOS == "windows" {
+			lookupCmd = strings.ToLower(cmd)
+		}
+		if !set[lookupCmd] {
+			return fmt.Errorf("command %q is not in the allowed commands list: %v\n  Scenario: %s\n  Step %d: %v",
+				cmd, allowed, scn.Meta.Name, i+1, step.Match.Argv)
+		}
+	}
+	return nil
+}

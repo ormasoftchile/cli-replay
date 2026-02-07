@@ -15,6 +15,7 @@ type RecordedCommand struct {
 	ExitCode  int       `json:"exit"`
 	Stdout    string    `json:"stdout"`
 	Stderr    string    `json:"stderr"`
+	Stdin     string    `json:"stdin,omitempty"`
 }
 
 // Validate checks that the RecordedCommand is valid.

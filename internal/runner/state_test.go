@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cli-replay/cli-replay/internal/scenario"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -407,4 +408,200 @@ func TestState_InterceptDir_Serialization(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, state.InterceptDir, loaded.InterceptDir)
+}
+
+// --- T006: StepCounts migration and method tests ---
+
+func TestNewState_InitializesStepCounts(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash123", 5)
+	require.NotNil(t, state.StepCounts)
+	assert.Len(t, state.StepCounts, 5)
+	for _, c := range state.StepCounts {
+		assert.Equal(t, 0, c)
+	}
+	// ConsumedSteps should NOT be populated in new state
+	assert.Nil(t, state.ConsumedSteps)
+}
+
+func TestReadState_MigratesConsumedStepsToStepCounts(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "legacy.state")
+
+	// Write a legacy state file with ConsumedSteps (no StepCounts)
+	legacyJSON := `{
+		"scenario_path": "/path/to/scenario.yaml",
+		"scenario_hash": "abc123",
+		"current_step": 2,
+		"total_steps": 4,
+		"consumed_steps": [true, true, false, false],
+		"last_updated": "2026-02-07T10:00:00Z"
+	}`
+	err := os.WriteFile(stateFile, []byte(legacyJSON), 0600)
+	require.NoError(t, err)
+
+	// Read and expect migration
+	state, err := ReadState(stateFile)
+	require.NoError(t, err)
+
+	assert.Equal(t, []int{1, 1, 0, 0}, state.StepCounts)
+	assert.Nil(t, state.ConsumedSteps, "ConsumedSteps should be nil after migration")
+}
+
+func TestReadState_PreservesStepCountsWhenPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "new.state")
+
+	newJSON := `{
+		"scenario_path": "/path/to/scenario.yaml",
+		"scenario_hash": "abc123",
+		"current_step": 2,
+		"total_steps": 3,
+		"step_counts": [3, 1, 0],
+		"last_updated": "2026-02-07T10:00:00Z"
+	}`
+	err := os.WriteFile(stateFile, []byte(newJSON), 0600)
+	require.NoError(t, err)
+
+	state, err := ReadState(stateFile)
+	require.NoError(t, err)
+
+	assert.Equal(t, []int{3, 1, 0}, state.StepCounts)
+}
+
+func TestState_Advance_IncrementsStepCounts(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+
+	state.Advance()
+	assert.Equal(t, 1, state.CurrentStep)
+	assert.Equal(t, []int{1, 0, 0}, state.StepCounts)
+
+	state.Advance()
+	assert.Equal(t, 2, state.CurrentStep)
+	assert.Equal(t, []int{1, 1, 0}, state.StepCounts)
+
+	state.Advance()
+	assert.Equal(t, 3, state.CurrentStep)
+	assert.Equal(t, []int{1, 1, 1}, state.StepCounts)
+}
+
+func TestState_AdvanceStep_IncrementsStepCounts(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+
+	state.AdvanceStep(0)
+	assert.Equal(t, []int{1, 0, 0}, state.StepCounts)
+
+	state.AdvanceStep(0) // increment again
+	assert.Equal(t, []int{2, 0, 0}, state.StepCounts)
+
+	state.AdvanceStep(2) // out of order
+	assert.Equal(t, []int{2, 0, 1}, state.StepCounts)
+}
+
+func TestState_AllStepsConsumed_WithStepCounts(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+	assert.False(t, state.AllStepsConsumed())
+
+	state.StepCounts = []int{1, 0, 0}
+	assert.False(t, state.AllStepsConsumed())
+
+	state.StepCounts = []int{1, 1, 1}
+	assert.True(t, state.AllStepsConsumed())
+
+	state.StepCounts = []int{5, 1, 3}
+	assert.True(t, state.AllStepsConsumed())
+}
+
+func TestState_IsStepConsumed_WithStepCounts(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+	state.StepCounts = []int{2, 0, 1}
+
+	assert.True(t, state.IsStepConsumed(0))
+	assert.False(t, state.IsStepConsumed(1))
+	assert.True(t, state.IsStepConsumed(2))
+	assert.False(t, state.IsStepConsumed(-1))
+	assert.False(t, state.IsStepConsumed(5))
+}
+
+// T019: Tests for IncrementStep, StepBudgetRemaining, AllStepsMetMin
+
+func TestState_IncrementStep(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+
+	state.IncrementStep(0)
+	assert.Equal(t, 1, state.StepCounts[0])
+
+	state.IncrementStep(0)
+	assert.Equal(t, 2, state.StepCounts[0])
+
+	state.IncrementStep(2)
+	assert.Equal(t, 1, state.StepCounts[2])
+
+	// Out of bounds — no panic
+	state.IncrementStep(-1)
+	state.IncrementStep(10)
+}
+
+func TestState_IncrementStep_NilStepCounts(t *testing.T) {
+	state := &State{TotalSteps: 3}
+	state.IncrementStep(1)
+	assert.NotNil(t, state.StepCounts)
+	assert.Equal(t, 1, state.StepCounts[1])
+}
+
+func TestState_StepBudgetRemaining(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+
+	// Budget of 5, 0 consumed → 5 remaining
+	assert.Equal(t, 5, state.StepBudgetRemaining(0, 5))
+
+	state.StepCounts[0] = 3
+	assert.Equal(t, 2, state.StepBudgetRemaining(0, 5))
+
+	state.StepCounts[0] = 5
+	assert.Equal(t, 0, state.StepBudgetRemaining(0, 5))
+
+	state.StepCounts[0] = 7 // over budget
+	assert.Equal(t, 0, state.StepBudgetRemaining(0, 5))
+
+	// Out of bounds
+	assert.Equal(t, 0, state.StepBudgetRemaining(-1, 5))
+	assert.Equal(t, 0, state.StepBudgetRemaining(10, 5))
+}
+
+func TestState_AllStepsMetMin(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+
+	steps := []scenario.Step{
+		{Calls: &scenario.CallBounds{Min: 2, Max: 5}},
+		{Calls: &scenario.CallBounds{Min: 1, Max: 1}},
+		{}, // no call bounds → defaults to min=1
+	}
+
+	// All zeros — not met
+	assert.False(t, state.AllStepsMetMin(steps))
+
+	// Partially met
+	state.StepCounts = []int{2, 1, 0}
+	assert.False(t, state.AllStepsMetMin(steps))
+
+	// All met
+	state.StepCounts = []int{2, 1, 1}
+	assert.True(t, state.AllStepsMetMin(steps))
+
+	// Over min
+	state.StepCounts = []int{5, 1, 3}
+	assert.True(t, state.AllStepsMetMin(steps))
+}
+
+func TestState_AllStepsMetMin_OptionalStep(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 2)
+
+	steps := []scenario.Step{
+		{Calls: &scenario.CallBounds{Min: 0, Max: 5}}, // optional
+		{}, // default min=1
+	}
+
+	// Optional step not called, required step called
+	state.StepCounts = []int{0, 1}
+	assert.True(t, state.AllStepsMetMin(steps))
 }

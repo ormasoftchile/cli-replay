@@ -258,3 +258,58 @@ func TestArgvMatch_Regex(t *testing.T) {
 		})
 	}
 }
+
+func TestElementMatchDetail_LiteralMatch(t *testing.T) {
+	d := ElementMatchDetail("pods", "pods")
+	assert.True(t, d.Matched)
+	assert.Equal(t, "literal", d.Kind)
+	assert.Empty(t, d.Pattern)
+	assert.Empty(t, d.FailReason)
+}
+
+func TestElementMatchDetail_LiteralFail(t *testing.T) {
+	d := ElementMatchDetail("pods", "services")
+	assert.False(t, d.Matched)
+	assert.Equal(t, "literal", d.Kind)
+	assert.Empty(t, d.Pattern)
+	assert.Contains(t, d.FailReason, `expected "pods"`)
+	assert.Contains(t, d.FailReason, `got "services"`)
+}
+
+func TestElementMatchDetail_WildcardMatch(t *testing.T) {
+	d := ElementMatchDetail("{{ .any }}", "anything-goes")
+	assert.True(t, d.Matched)
+	assert.Equal(t, "wildcard", d.Kind)
+	assert.Equal(t, "{{ .any }}", d.Pattern)
+	assert.Empty(t, d.FailReason)
+}
+
+func TestElementMatchDetail_WildcardMatchCompact(t *testing.T) {
+	d := ElementMatchDetail("{{.any}}", "value")
+	assert.True(t, d.Matched)
+	assert.Equal(t, "wildcard", d.Kind)
+}
+
+func TestElementMatchDetail_RegexMatch(t *testing.T) {
+	d := ElementMatchDetail(`{{ .regex "^prod-.*" }}`, "prod-east")
+	assert.True(t, d.Matched)
+	assert.Equal(t, "regex", d.Kind)
+	assert.Equal(t, "^prod-.*", d.Pattern)
+	assert.Empty(t, d.FailReason)
+}
+
+func TestElementMatchDetail_RegexFail(t *testing.T) {
+	d := ElementMatchDetail(`{{ .regex "^prod-.*" }}`, "staging-app")
+	assert.False(t, d.Matched)
+	assert.Equal(t, "regex", d.Kind)
+	assert.Equal(t, "^prod-.*", d.Pattern)
+	assert.Contains(t, d.FailReason, "did not match")
+	assert.Contains(t, d.FailReason, "staging-app")
+}
+
+func TestElementMatchDetail_RegexInvalid(t *testing.T) {
+	d := ElementMatchDetail(`{{ .regex "[invalid" }}`, "anything")
+	assert.False(t, d.Matched)
+	assert.Equal(t, "regex", d.Kind)
+	assert.Contains(t, d.FailReason, "invalid regex")
+}

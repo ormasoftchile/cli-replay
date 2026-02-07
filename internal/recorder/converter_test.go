@@ -224,6 +224,73 @@ func TestWriteYAMLFile_InvalidPath(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// T033: Test ConvertToScenario propagates stdin to match
+func TestConvertToScenario_WithStdin(t *testing.T) {
+	meta := SessionMetadata{
+		Name:        "stdin-test",
+		Description: "Commands with stdin",
+		RecordedAt:  mustParseTime("2024-01-15T10:00:00Z"),
+	}
+
+	commands := []RecordedCommand{
+		{
+			Timestamp: mustParseTime("2024-01-15T10:30:00Z"),
+			Argv:      []string{"kubectl", "apply", "-f", "-"},
+			ExitCode:  0,
+			Stdout:    "pod/test-pod created\n",
+			Stderr:    "",
+			Stdin:     "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod\n",
+		},
+		{
+			Timestamp: mustParseTime("2024-01-15T10:30:05Z"),
+			Argv:      []string{"kubectl", "get", "pods"},
+			ExitCode:  0,
+			Stdout:    "test-pod   1/1   Running\n",
+			Stderr:    "",
+			Stdin:     "", // No stdin for this command
+		},
+	}
+
+	sc, err := ConvertToScenario(meta, commands)
+	require.NoError(t, err)
+
+	require.Len(t, sc.Steps, 2)
+
+	// Step 1 should have stdin populated
+	assert.Equal(t, "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod\n", sc.Steps[0].Match.Stdin)
+
+	// Step 2 should have empty stdin (omitted)
+	assert.Empty(t, sc.Steps[1].Match.Stdin)
+}
+
+func TestConvertToScenario_StdinAppearsInYAML(t *testing.T) {
+	meta := SessionMetadata{
+		Name:        "stdin-yaml-test",
+		Description: "Stdin in generated YAML",
+		RecordedAt:  mustParseTime("2024-01-15T10:00:00Z"),
+	}
+
+	commands := []RecordedCommand{
+		{
+			Timestamp: mustParseTime("2024-01-15T10:30:00Z"),
+			Argv:      []string{"cat"},
+			ExitCode:  0,
+			Stdout:    "hello world\n",
+			Stderr:    "",
+			Stdin:     "hello world\n",
+		},
+	}
+
+	sc, err := ConvertToScenario(meta, commands)
+	require.NoError(t, err)
+
+	yamlStr, err := GenerateYAML(sc)
+	require.NoError(t, err)
+
+	assert.Contains(t, yamlStr, "stdin:")
+	assert.Contains(t, yamlStr, "hello world")
+}
+
 // Helper function to parse time from RFC3339 string
 func mustParseTime(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)

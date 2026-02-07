@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
 	"github.com/cli-replay/cli-replay/internal/scenario"
@@ -66,30 +65,90 @@ func runVerify(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to read state: %w", err)
 	}
 
-	if state.IsComplete() {
-		fmt.Fprintf(os.Stderr, "cli-replay: scenario %q complete (%d/%d steps)\n",
-			scn.Meta.Name, state.TotalSteps, state.TotalSteps)
+	// Check completion: AllStepsMetMin covers both simple (min=1 default) and bounded cases.
+	hasCallBounds := hasAnyCallBounds(scn.Steps)
+	allMetMin := state.AllStepsMetMin(scn.Steps)
+
+	if allMetMin {
+		consumed := countConsumedSteps(state)
+		fmt.Fprintf(os.Stderr, "✓ Scenario %q completed: %d/%d steps consumed\n",
+			scn.Meta.Name, consumed, state.TotalSteps)
+		if hasCallBounds {
+			printPerStepCounts(scn.Steps, state)
+		}
 		return nil
 	}
 
-	// Incomplete — show remaining steps
-	fmt.Fprintf(os.Stderr, "cli-replay: scenario %q incomplete\n", scn.Meta.Name)
-	fmt.Fprintf(os.Stderr, "  consumed: %d/%d steps\n", state.CurrentStep, state.TotalSteps)
-	fmt.Fprintf(os.Stderr, "  remaining:\n")
-	for i := state.CurrentStep; i < len(scn.Steps); i++ {
-		argv := scn.Steps[i].Match.Argv
-		fmt.Fprintf(os.Stderr, "    step %d: [%s]\n", i+1, formatArgv(argv))
-	}
+	// Incomplete — show per-step detail
+	consumed := countConsumedSteps(state)
+	fmt.Fprintf(os.Stderr, "✗ Scenario %q incomplete\n", scn.Meta.Name)
+	fmt.Fprintf(os.Stderr, "  consumed: %d/%d steps\n", consumed, state.TotalSteps)
+	printPerStepCounts(scn.Steps, state)
 	os.Exit(1)
 
 	return nil // unreachable but satisfies compiler
 }
 
-// formatArgv formats an argv slice as a quoted, comma-separated string.
-func formatArgv(argv []string) string {
-	quoted := make([]string, len(argv))
-	for i, a := range argv {
-		quoted[i] = fmt.Sprintf("%q", a)
+// hasAnyCallBounds returns true if any step has explicit call bounds.
+func hasAnyCallBounds(steps []scenario.Step) bool {
+	for _, step := range steps {
+		if step.Calls != nil {
+			return true
+		}
 	}
-	return strings.Join(quoted, ", ")
+	return false
+}
+
+// countConsumedSteps counts how many steps have been invoked at least once.
+func countConsumedSteps(state *runner.State) int {
+	count := 0
+	if state.StepCounts != nil {
+		for _, c := range state.StepCounts {
+			if c >= 1 {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// printPerStepCounts prints per-step invocation counts with call bounds info.
+func printPerStepCounts(steps []scenario.Step, state *runner.State) {
+	for i, step := range steps {
+		bounds := step.EffectiveCalls()
+		callCount := 0
+		if state.StepCounts != nil && i < len(state.StepCounts) {
+			callCount = state.StepCounts[i]
+		}
+
+		// Build step label from first argv elements
+		label := ""
+		if len(step.Match.Argv) > 0 {
+			label = step.Match.Argv[0]
+			if len(step.Match.Argv) > 1 {
+				label += " " + step.Match.Argv[1]
+			}
+		}
+
+		callWord := "calls"
+		if callCount == 1 {
+			callWord = "call"
+		}
+
+		status := "✓"
+		suffix := ""
+		if callCount < bounds.Min {
+			status = "✗"
+			needed := bounds.Min - callCount
+			suffix = fmt.Sprintf(" needs %d more", needed)
+		}
+
+		if step.Calls != nil {
+			fmt.Fprintf(os.Stderr, "  Step %d: %s — %d %s (min: %d, max: %d) %s%s\n",
+				i+1, label, callCount, callWord, bounds.Min, bounds.Max, status, suffix)
+		} else {
+			fmt.Fprintf(os.Stderr, "  Step %d: %s — %d %s %s%s\n",
+				i+1, label, callCount, callWord, status, suffix)
+		}
+	}
 }

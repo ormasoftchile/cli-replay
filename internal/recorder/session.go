@@ -253,7 +253,7 @@ func (s *RecordingSession) executeAndCapture(args []string, stdout, stderr io.Wr
 	s.Commands = append(s.Commands, recorded)
 
 	// Also write to JSONL log for consistency
-	if err := LogRecording(s.LogFile, recorded.Timestamp, recorded.Argv, recorded.ExitCode, recorded.Stdout, recorded.Stderr); err != nil {
+	if err := LogRecording(s.LogFile, recorded.Timestamp, recorded.Argv, recorded.ExitCode, recorded.Stdout, recorded.Stderr, recorded.Stdin); err != nil {
 		return exitCode, fmt.Errorf("failed to write recording log: %w", err)
 	}
 

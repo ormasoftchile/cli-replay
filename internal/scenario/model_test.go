@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 //nolint:funlen // Table-driven test with comprehensive test cases
@@ -216,7 +217,290 @@ func TestMatch_Validate(t *testing.T) {
 	}
 }
 
-//nolint:funlen // Table-driven test with comprehensive test cases
+func TestCallBounds_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		calls       CallBounds
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid exactly once",
+			calls:   CallBounds{Min: 1, Max: 1},
+			wantErr: false,
+		},
+		{
+			name:    "valid range",
+			calls:   CallBounds{Min: 1, Max: 5},
+			wantErr: false,
+		},
+		{
+			name:    "valid optional step",
+			calls:   CallBounds{Min: 0, Max: 1},
+			wantErr: false,
+		},
+		{
+			name:    "valid min equals max",
+			calls:   CallBounds{Min: 3, Max: 3},
+			wantErr: false,
+		},
+		{
+			name:        "max zero rejected",
+			calls:       CallBounds{Min: 0, Max: 0},
+			wantErr:     true,
+			errContains: "max must be >= 1",
+		},
+		{
+			name:        "negative min rejected",
+			calls:       CallBounds{Min: -1, Max: 1},
+			wantErr:     true,
+			errContains: "min must be >= 0",
+		},
+		{
+			name:        "min greater than max rejected",
+			calls:       CallBounds{Min: 5, Max: 3},
+			wantErr:     true,
+			errContains: "min (5) must be <= max (3)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.calls.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestStep_EffectiveCalls(t *testing.T) {
+	t.Run("nil calls returns default {1,1}", func(t *testing.T) {
+		step := Step{
+			Match:   Match{Argv: []string{"cmd"}},
+			Respond: Response{Exit: 0},
+		}
+		ec := step.EffectiveCalls()
+		assert.Equal(t, 1, ec.Min)
+		assert.Equal(t, 1, ec.Max)
+	})
+
+	t.Run("explicit calls returned as-is", func(t *testing.T) {
+		step := Step{
+			Match:   Match{Argv: []string{"cmd"}},
+			Respond: Response{Exit: 0},
+			Calls:   &CallBounds{Min: 2, Max: 5},
+		}
+		ec := step.EffectiveCalls()
+		assert.Equal(t, 2, ec.Min)
+		assert.Equal(t, 5, ec.Max)
+	})
+}
+
+func TestStep_Validate_WithCalls(t *testing.T) {
+	tests := []struct {
+		name        string
+		step        Step
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid step with calls",
+			step: Step{
+				Match:   Match{Argv: []string{"cmd"}},
+				Respond: Response{Exit: 0},
+				Calls:   &CallBounds{Min: 1, Max: 5},
+			},
+			wantErr: false,
+		},
+		{
+			name: "calls min only defaults max to min",
+			step: Step{
+				Match:   Match{Argv: []string{"cmd"}},
+				Respond: Response{Exit: 0},
+				Calls:   &CallBounds{Min: 3, Max: 0},
+			},
+			wantErr: false, // defaulting: max = min = 3
+		},
+		{
+			name: "calls max:0 min:0 rejected",
+			step: Step{
+				Match:   Match{Argv: []string{"cmd"}},
+				Respond: Response{Exit: 0},
+				Calls:   &CallBounds{Min: 0, Max: 0},
+			},
+			wantErr:     true,
+			errContains: "max must be >= 1",
+		},
+		{
+			name: "calls min > max rejected",
+			step: Step{
+				Match:   Match{Argv: []string{"cmd"}},
+				Respond: Response{Exit: 0},
+				Calls:   &CallBounds{Min: 5, Max: 3},
+			},
+			wantErr:     true,
+			errContains: "min (5) must be <= max (3)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.step.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSecurity_AllowedCommands(t *testing.T) {
+	t.Run("security struct with allowed commands", func(t *testing.T) {
+		sec := Security{AllowedCommands: []string{"kubectl", "az"}}
+		assert.Equal(t, []string{"kubectl", "az"}, sec.AllowedCommands)
+	})
+
+	t.Run("empty allowed commands", func(t *testing.T) {
+		sec := Security{}
+		assert.Nil(t, sec.AllowedCommands)
+	})
+}
+
+func TestMeta_WithSecurity(t *testing.T) {
+	t.Run("meta with security section", func(t *testing.T) {
+		meta := Meta{
+			Name:     "test",
+			Security: &Security{AllowedCommands: []string{"kubectl"}},
+		}
+		require.NoError(t, meta.Validate())
+		assert.NotNil(t, meta.Security)
+		assert.Equal(t, []string{"kubectl"}, meta.Security.AllowedCommands)
+	})
+
+	t.Run("meta without security section", func(t *testing.T) {
+		meta := Meta{Name: "test"}
+		require.NoError(t, meta.Validate())
+		assert.Nil(t, meta.Security)
+	})
+}
+
+func TestMatch_WithStdin(t *testing.T) {
+	t.Run("match with stdin", func(t *testing.T) {
+		m := Match{
+			Argv:  []string{"kubectl", "apply", "-f", "-"},
+			Stdin: "apiVersion: v1\nkind: Pod",
+		}
+		require.NoError(t, m.Validate())
+		assert.Equal(t, "apiVersion: v1\nkind: Pod", m.Stdin)
+	})
+
+	t.Run("match without stdin", func(t *testing.T) {
+		m := Match{Argv: []string{"cmd"}}
+		require.NoError(t, m.Validate())
+		assert.Empty(t, m.Stdin)
+	})
+}
+
+func TestMatch_StdinYAMLParsing(t *testing.T) {
+	// Test that stdin is correctly parsed from YAML
+	yamlContent := `
+meta:
+  name: stdin-test
+steps:
+  - match:
+      argv: ["kubectl", "apply", "-f", "-"]
+      stdin: |
+        apiVersion: v1
+        kind: Pod
+    respond:
+      exit: 0
+      stdout: "created"
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.Len(t, scn.Steps, 1)
+	assert.Contains(t, scn.Steps[0].Match.Stdin, "apiVersion: v1")
+	assert.Contains(t, scn.Steps[0].Match.Stdin, "kind: Pod")
+}
+
+func TestCallBounds_YAMLParsing(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantMin int
+		wantMax int
+		wantNil bool
+	}{
+		{
+			name:    "no calls field",
+			yaml:    `match: {argv: ["cmd"]}` + "\nrespond: {exit: 0}",
+			wantNil: true,
+		},
+		{
+			name:    "min and max specified",
+			yaml:    `match: {argv: ["cmd"]}` + "\nrespond: {exit: 0}\ncalls: {min: 1, max: 5}",
+			wantMin: 1,
+			wantMax: 5,
+		},
+		{
+			name:    "min only",
+			yaml:    `match: {argv: ["cmd"]}` + "\nrespond: {exit: 0}\ncalls: {min: 3}",
+			wantMin: 3,
+			wantMax: 0, // Go zero-value; defaulted during validation
+		},
+		{
+			name:    "max only",
+			yaml:    `match: {argv: ["cmd"]}` + "\nrespond: {exit: 0}\ncalls: {max: 5}",
+			wantMin: 0,
+			wantMax: 5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var step Step
+			err := yaml.Unmarshal([]byte(tt.yaml), &step)
+			require.NoError(t, err)
+
+			if tt.wantNil {
+				assert.Nil(t, step.Calls)
+			} else {
+				require.NotNil(t, step.Calls)
+				assert.Equal(t, tt.wantMin, step.Calls.Min)
+				assert.Equal(t, tt.wantMax, step.Calls.Max)
+			}
+		})
+	}
+}
+
+func TestSecurityYAMLParsing(t *testing.T) {
+	yamlContent := `
+meta:
+  name: security-test
+  security:
+    allowed_commands:
+      - kubectl
+      - az
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+`
+	var scn Scenario
+	err := yaml.Unmarshal([]byte(yamlContent), &scn)
+	require.NoError(t, err)
+	require.NotNil(t, scn.Meta.Security)
+	assert.Equal(t, []string{"kubectl", "az"}, scn.Meta.Security.AllowedCommands)
+}
+
 func TestResponse_Validate(t *testing.T) {
 	tests := []struct {
 		name        string

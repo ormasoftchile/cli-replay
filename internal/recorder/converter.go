@@ -28,7 +28,8 @@ func ConvertToScenario(meta SessionMetadata, commands []RecordedCommand) (*scena
 	for _, cmd := range commands {
 		step := scenario.Step{
 			Match: scenario.Match{
-				Argv: cmd.Argv,
+				Argv:  cmd.Argv,
+				Stdin: cmd.Stdin, // populated when non-empty
 			},
 			Respond: scenario.Response{
 				Exit:   cmd.ExitCode,

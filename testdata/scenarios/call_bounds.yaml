@@ -1,0 +1,30 @@
+meta:
+  name: call-bounds-demo
+  description: Test fixture for call count bounds feature
+
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods", "-n", "default"]
+    calls:
+      min: 1
+      max: 5
+    respond:
+      exit: 0
+      stdout: |
+        NAME         READY   STATUS    RESTARTS   AGE
+        nginx-pod    1/1     Running   0          5m
+
+  - match:
+      argv: ["kubectl", "apply", "-f", "deploy.yaml"]
+    respond:
+      exit: 0
+      stdout: "deployment.apps/nginx configured\n"
+
+  - match:
+      argv: ["kubectl", "rollout", "status", "deployment/nginx"]
+    calls:
+      min: 1
+      max: 3
+    respond:
+      exit: 0
+      stdout: "deployment \"nginx\" successfully rolled out\n"
