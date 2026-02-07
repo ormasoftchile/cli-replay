@@ -338,3 +338,73 @@ func TestState_RemainingSteps(t *testing.T) {
 		})
 	}
 }
+
+func TestStateFilePathWithSession(t *testing.T) {
+	scenarioPath := "/path/to/scenario.yaml"
+
+	t.Run("empty session matches legacy behavior", func(t *testing.T) {
+		withSession := StateFilePathWithSession(scenarioPath, "")
+		legacy := StateFilePathWithSession(scenarioPath, "")
+		assert.Equal(t, legacy, withSession)
+	})
+
+	t.Run("different sessions produce different paths", func(t *testing.T) {
+		pathA := StateFilePathWithSession(scenarioPath, "session-a")
+		pathB := StateFilePathWithSession(scenarioPath, "session-b")
+		assert.NotEqual(t, pathA, pathB)
+	})
+
+	t.Run("same session same path", func(t *testing.T) {
+		pathA := StateFilePathWithSession(scenarioPath, "session-x")
+		pathB := StateFilePathWithSession(scenarioPath, "session-x")
+		assert.Equal(t, pathA, pathB)
+	})
+
+	t.Run("session isolates from no-session", func(t *testing.T) {
+		noSession := StateFilePathWithSession(scenarioPath, "")
+		withSession := StateFilePathWithSession(scenarioPath, "my-session")
+		assert.NotEqual(t, noSession, withSession)
+	})
+
+	t.Run("different scenarios same session still differ", func(t *testing.T) {
+		pathA := StateFilePathWithSession("/path/a.yaml", "session-1")
+		pathB := StateFilePathWithSession("/path/b.yaml", "session-1")
+		assert.NotEqual(t, pathA, pathB)
+	})
+}
+
+func TestStateFilePath_ReadsEnv(t *testing.T) {
+	scenarioPath := "/path/to/scenario.yaml"
+
+	// Without session env
+	t.Setenv("CLI_REPLAY_SESSION", "")
+	noSession := StateFilePath(scenarioPath)
+
+	// With session env
+	t.Setenv("CLI_REPLAY_SESSION", "test-session-123")
+	withSession := StateFilePath(scenarioPath)
+
+	assert.NotEqual(t, noSession, withSession, "session env should change state file path")
+}
+
+func TestState_InterceptDir_Serialization(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "test.state")
+
+	state := &State{
+		ScenarioPath: "/path/to/scenario.yaml",
+		ScenarioHash: "abc123",
+		CurrentStep:  0,
+		TotalSteps:   3,
+		InterceptDir: "/tmp/cli-replay-intercept-abc",
+		LastUpdated:  time.Now().UTC().Truncate(time.Second),
+	}
+
+	err := WriteState(stateFile, state)
+	require.NoError(t, err)
+
+	loaded, err := ReadState(stateFile)
+	require.NoError(t, err)
+
+	assert.Equal(t, state.InterceptDir, loaded.InterceptDir)
+}

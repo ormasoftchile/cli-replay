@@ -17,6 +17,7 @@ type State struct {
 	ScenarioHash string    `json:"scenario_hash"`
 	CurrentStep  int       `json:"current_step"`
 	TotalSteps   int       `json:"total_steps"`
+	InterceptDir string    `json:"intercept_dir,omitempty"`
 	LastUpdated  time.Time `json:"last_updated"`
 }
 
@@ -43,8 +44,20 @@ func (s *State) RemainingSteps() int {
 // StateFilePath returns the path to the state file for a given scenario path.
 // The state file is stored in the system temp directory with a hash of the
 // scenario path to ensure uniqueness.
+// If CLI_REPLAY_SESSION is set, it is included in the hash to allow parallel sessions.
 func StateFilePath(scenarioPath string) string {
-	hash := sha256.Sum256([]byte(scenarioPath))
+	return StateFilePathWithSession(scenarioPath, os.Getenv("CLI_REPLAY_SESSION"))
+}
+
+// StateFilePathWithSession returns the state file path for a given scenario
+// and session ID. When session is non-empty, each session gets its own state
+// file, enabling parallel test execution against the same scenario.
+func StateFilePathWithSession(scenarioPath, session string) string {
+	key := scenarioPath
+	if session != "" {
+		key = scenarioPath + "\x00" + session
+	}
+	hash := sha256.Sum256([]byte(key))
 	hashStr := hex.EncodeToString(hash[:])[:16]
 	return filepath.Join(os.TempDir(), fmt.Sprintf("cli-replay-%s.state", hashStr))
 }

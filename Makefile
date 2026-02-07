@@ -20,24 +20,24 @@ all: lint test build
 # Build the binary
 build:
 	@mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY) ./cmd/cli-replay
+	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY) .
 
 # Build for all platforms (release)
 build-all: build-linux build-darwin build-windows
 
 build-linux:
 	@mkdir -p $(BIN_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-amd64 ./cmd/cli-replay
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-arm64 ./cmd/cli-replay
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-amd64 .
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-linux-arm64 .
 
 build-darwin:
 	@mkdir -p $(BIN_DIR)
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-amd64 ./cmd/cli-replay
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-arm64 ./cmd/cli-replay
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-amd64 .
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-darwin-arm64 .
 
 build-windows:
 	@mkdir -p $(BIN_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-windows-amd64.exe ./cmd/cli-replay
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY)-windows-amd64.exe .
 
 ## Test targets
 
@@ -74,7 +74,7 @@ fmt-check:
 
 # Install binary to GOPATH/bin
 install: build
-	go install ./cmd/cli-replay
+	go install .
 
 # Clean build artifacts
 clean:
@@ -97,9 +97,9 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Build targets:"
-	@echo "  build        Build the binary (default)"
-	@echo "  build-all    Build for all platforms"
-	@echo "  install      Install to GOPATH/bin"
+	@echo "  build         Build the binary (default)"
+	@echo "  build-all     Build for all platforms"
+	@echo "  install       Install to GOPATH/bin"
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test         Run tests with race detection"
