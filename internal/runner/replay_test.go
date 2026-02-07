@@ -881,7 +881,7 @@ func TestReplayResponseWithTemplate_DeniedEnvVarEmptyString(t *testing.T) {
 	t.Setenv("AWS_KEY", "real-secret-value")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "key=|end", stdout.String())
 }
@@ -905,7 +905,7 @@ func TestReplayResponseWithTemplate_AllowedEnvVarRealValue(t *testing.T) {
 	t.Setenv("HOME_VAR", "/real/home")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "home=/real/home", stdout.String())
 }
@@ -926,7 +926,7 @@ func TestReplayResponseWithTemplate_NoSecurityPassthrough(t *testing.T) {
 	t.Setenv("MY_VAR", "env-override")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "val=env-override", stdout.String())
 }
@@ -954,7 +954,7 @@ func TestReplayResponseWithTemplate_WildcardDenyAll(t *testing.T) {
 	t.Setenv("VAR_B", "env-b")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "a=base-a b=base-b", stdout.String())
 }
@@ -983,7 +983,7 @@ func TestReplayResponseWithTemplate_GlobPatterns(t *testing.T) {
 	t.Setenv("NORMAL", "env-normal")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	// AWS_KEY and GITHUB_TOKEN denied → base values; NORMAL allowed → env value
 	assert.Equal(t, "base-aws|base-gh|env-normal", stdout.String())
@@ -1008,7 +1008,7 @@ func TestReplayResponseWithTemplate_DenyWithTrace(t *testing.T) {
 	t.Setenv("CLI_REPLAY_TRACE", "1")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "base", stdout.String())
 	assert.Contains(t, stderr.String(), "cli-replay[trace]: denied env var SECRET")
@@ -1033,7 +1033,7 @@ func TestReplayResponseWithTemplate_DenyPreservesMetaVarsValue(t *testing.T) {
 	t.Setenv("AWS_KEY", "real-secret")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "key=safe-default-value", stdout.String())
 }
@@ -1062,7 +1062,7 @@ func TestReplayResponseWithTemplate_DenyAndSessionTTL_Composability(t *testing.T
 	t.Setenv("cluster", "override-cluster")
 
 	var stdout, stderr bytes.Buffer
-	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", &stdout, &stderr)
+	exitCode := ReplayResponseWithTemplate(step, scn, "/fake/path/scenario.yaml", nil, &stdout, &stderr)
 	assert.Equal(t, 0, exitCode)
 	// cluster is NOT denied, env override applies
 	assert.Equal(t, "cluster=override-cluster", stdout.String())

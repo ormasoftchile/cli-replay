@@ -263,3 +263,94 @@ func TestMergeVarsFiltered_NilVars(t *testing.T) {
 	assert.Empty(t, merged)
 	assert.Empty(t, denied)
 }
+
+// T015: RenderWithCaptures tests
+
+func TestRenderWithCaptures_BasicCapture(t *testing.T) {
+	vars := map[string]string{"region": "eastus"}
+	captures := map[string]string{"vm_id": "vm-123", "rg_id": "rg-456"}
+
+	result, err := RenderWithCaptures("VM={{ .capture.vm_id }} RG={{ .capture.rg_id }} R={{ .region }}", vars, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "VM=vm-123 RG=rg-456 R=eastus", result)
+}
+
+func TestRenderWithCaptures_UndefinedCapture_ResolvesToEmpty(t *testing.T) {
+	vars := map[string]string{"region": "eastus"}
+	captures := map[string]string{}
+
+	result, err := RenderWithCaptures("VM=[{{ .capture.vm_id }}] R={{ .region }}", vars, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "VM=[] R=eastus", result)
+}
+
+func TestRenderWithCaptures_NilCaptures(t *testing.T) {
+	vars := map[string]string{"name": "test"}
+
+	result, err := RenderWithCaptures("Hello {{ .name }}, cap=[{{ .capture.x }}]", vars, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Hello test, cap=[]", result)
+}
+
+func TestRenderWithCaptures_EmptyTemplate(t *testing.T) {
+	result, err := RenderWithCaptures("", nil, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+func TestRenderWithCaptures_NoCaptureRefs(t *testing.T) {
+	vars := map[string]string{"cluster": "prod"}
+
+	result, err := RenderWithCaptures("Cluster={{ .cluster }}", vars, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Cluster=prod", result)
+}
+
+func TestRenderWithCaptures_OnlyCaptureRefs(t *testing.T) {
+	captures := map[string]string{"pod_name": "web-0"}
+
+	result, err := RenderWithCaptures("Pod={{ .capture.pod_name }}", nil, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "Pod=web-0", result)
+}
+
+func TestRenderWithCaptures_MultilineTemplate(t *testing.T) {
+	vars := map[string]string{"ns": "prod"}
+	captures := map[string]string{"pod": "web-0", "status": "Running"}
+
+	tmpl := `NAMESPACE: {{ .ns }}
+POD: {{ .capture.pod }}
+STATUS: {{ .capture.status }}`
+
+	result, err := RenderWithCaptures(tmpl, vars, captures)
+	require.NoError(t, err)
+	expected := "NAMESPACE: prod\nPOD: web-0\nSTATUS: Running"
+	assert.Equal(t, expected, result)
+}
+
+func TestRenderWithCaptures_InvalidTemplate(t *testing.T) {
+	_, err := RenderWithCaptures("{{ .capture.x", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse")
+}
+
+func TestRenderWithCaptures_CaptureDoesNotOverrideVar(t *testing.T) {
+	// If a var key "capture" exists, the capture map takes precedence
+	// because we set data["capture"] after vars
+	vars := map[string]string{"capture": "should-be-overridden"}
+	captures := map[string]string{"x": "value"}
+
+	result, err := RenderWithCaptures("{{ .capture.x }}", vars, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "value", result)
+}
+
+func TestRenderWithCaptures_SpecialCharsInCaptureValue(t *testing.T) {
+	captures := map[string]string{
+		"path": "/usr/local/bin:$HOME",
+	}
+
+	result, err := RenderWithCaptures("PATH={{ .capture.path }}", nil, captures)
+	require.NoError(t, err)
+	assert.Equal(t, "PATH=/usr/local/bin:$HOME", result)
+}

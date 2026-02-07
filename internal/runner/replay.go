@@ -68,9 +68,10 @@ func ReplayResponseWithFile(step *scenario.Step, scenarioPath string, stdout, st
 }
 
 // ReplayResponseWithTemplate writes the step's response with template rendering.
-// Templates in stdout/stderr are rendered with vars from scenario meta + environment.
+// Templates in stdout/stderr are rendered with vars from scenario meta + environment,
+// and captures from prior steps via the "capture" template namespace.
 // If deny_env_vars is configured, denied env vars are suppressed and traced.
-func ReplayResponseWithTemplate(step *scenario.Step, scn *scenario.Scenario, scenarioPath string, stdout, stderr io.Writer) int {
+func ReplayResponseWithTemplate(step *scenario.Step, scn *scenario.Scenario, scenarioPath string, captures map[string]string, stdout, stderr io.Writer) int {
 	scenarioDir := filepath.Dir(scenarioPath)
 
 	// Determine deny patterns from security config (T014, T015)
@@ -108,7 +109,7 @@ func ReplayResponseWithTemplate(step *scenario.Step, scn *scenario.Scenario, sce
 	}
 
 	if stdoutContent != "" {
-		rendered, err := template.Render(stdoutContent, vars)
+		rendered, err := template.RenderWithCaptures(stdoutContent, vars, captures)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "cli-replay: failed to render stdout template: %v\n", err)
 			return 1
@@ -130,7 +131,7 @@ func ReplayResponseWithTemplate(step *scenario.Step, scn *scenario.Scenario, sce
 	}
 
 	if stderrContent != "" {
-		rendered, err := template.Render(stderrContent, vars)
+		rendered, err := template.RenderWithCaptures(stderrContent, vars, captures)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "cli-replay: failed to render stderr template: %v\n", err)
 			return 1
@@ -458,8 +459,20 @@ func ExecuteReplay(scenarioPath string, argv []string, stdout, stderr io.Writer)
 		}
 	}
 
-	// Execute response with template rendering
-	exitCode := ReplayResponseWithTemplate(matchedStep, scn, absPath, stdout, stderr)
+	// Execute response with template rendering (pass current captures for template resolution)
+	exitCode := ReplayResponseWithTemplate(matchedStep, scn, absPath, state.Captures, stdout, stderr)
+
+	// Merge step captures into state (T017: after response is served)
+	// This naturally handles T018 (group captures — only captures from executed steps are merged)
+	// and T019 (optional steps — captures merge only on invocation)
+	if len(matchedStep.Respond.Capture) > 0 {
+		if state.Captures == nil {
+			state.Captures = make(map[string]string)
+		}
+		for k, v := range matchedStep.Respond.Capture {
+			state.Captures[k] = v
+		}
+	}
 
 	// Trace output if enabled
 	if IsTraceEnabled(os.Getenv(TraceEnvVar)) {

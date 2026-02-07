@@ -279,3 +279,187 @@ steps:
 	assert.NotEqual(t, 0, result2.ExitCode)
 	assert.Contains(t, stderr2.String(), "complete")
 }
+
+// T020: Integration test — capture chain end-to-end.
+// Load capture_chain.yaml, simulate 3-step replay, assert step 3 stdout
+// contains captured values from steps 1 and 2.
+func TestIntegration_CaptureChain(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	scenarioContent := `
+meta:
+  name: capture-chain
+steps:
+  - match:
+      argv: ["az", "group", "create", "--name", "demo-rg"]
+    respond:
+      exit: 0
+      stdout: '{"id": "/subscriptions/abc/resourceGroups/demo-rg", "name": "demo-rg"}'
+      capture:
+        rg_id: "/subscriptions/abc/resourceGroups/demo-rg"
+
+  - match:
+      argv: ["az", "vm", "create", "--resource-group", "demo-rg"]
+    respond:
+      exit: 0
+      stdout: '{"id": "/subscriptions/abc/vms/vm-1", "name": "vm-1"}'
+      capture:
+        vm_id: "/subscriptions/abc/vms/vm-1"
+
+  - match:
+      argv: ["az", "vm", "show", "--ids"]
+    respond:
+      exit: 0
+      stdout: 'rg={{ .capture.rg_id }} vm={{ .capture.vm_id }}'
+`
+	scenarioPath := filepath.Join(tmpDir, "scenario.yaml")
+	require.NoError(t, os.WriteFile(scenarioPath, []byte(scenarioContent), 0600))
+
+	// Step 1: az group create → captures rg_id
+	var stdout1, stderr1 bytes.Buffer
+	result1, err := ExecuteReplay(scenarioPath, []string{"az", "group", "create", "--name", "demo-rg"}, &stdout1, &stderr1)
+	require.NoError(t, err, "step 1 err: %s", stderr1.String())
+	assert.Equal(t, 0, result1.ExitCode)
+	assert.Contains(t, stdout1.String(), "demo-rg")
+
+	// Step 2: az vm create → captures vm_id
+	var stdout2, stderr2 bytes.Buffer
+	result2, err := ExecuteReplay(scenarioPath, []string{"az", "vm", "create", "--resource-group", "demo-rg"}, &stdout2, &stderr2)
+	require.NoError(t, err, "step 2 err: %s", stderr2.String())
+	assert.Equal(t, 0, result2.ExitCode)
+	assert.Contains(t, stdout2.String(), "vm-1")
+
+	// Step 3: az vm show → template uses captured values
+	var stdout3, stderr3 bytes.Buffer
+	result3, err := ExecuteReplay(scenarioPath, []string{"az", "vm", "show", "--ids"}, &stdout3, &stderr3)
+	require.NoError(t, err, "step 3 err: %s", stderr3.String())
+	assert.Equal(t, 0, result3.ExitCode)
+	assert.Equal(t, "rg=/subscriptions/abc/resourceGroups/demo-rg vm=/subscriptions/abc/vms/vm-1", stdout3.String())
+}
+
+// T021: Integration test — capture within unordered groups.
+// The group has two steps; the second references a capture from the first.
+// When pods step executes first, svc step can see its capture.
+// When base_id from ordered step 0 is referenced, it should resolve.
+func TestIntegration_CaptureGroup(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	scenarioContent := `
+meta:
+  name: capture-group
+steps:
+  - match:
+      argv: ["setup"]
+    respond:
+      exit: 0
+      stdout: "ready"
+      capture:
+        base_id: "base-123"
+
+  - group:
+      mode: unordered
+      name: monitoring
+      steps:
+        - match:
+            argv: ["kubectl", "get", "pods"]
+          respond:
+            exit: 0
+            stdout: "web-pod-1"
+            capture:
+              first_pod: "web-pod-1"
+
+        - match:
+            argv: ["kubectl", "get", "svc"]
+          respond:
+            exit: 0
+            stdout: 'svc for {{ .capture.first_pod }} base={{ .capture.base_id }}'
+
+  - match:
+      argv: ["teardown"]
+    respond:
+      exit: 0
+      stdout: 'done base={{ .capture.base_id }}'
+`
+	scenarioPath := filepath.Join(tmpDir, "scenario.yaml")
+	require.NoError(t, os.WriteFile(scenarioPath, []byte(scenarioContent), 0600))
+
+	// Step 0: setup → captures base_id
+	var stdout0, stderr0 bytes.Buffer
+	result0, err := ExecuteReplay(scenarioPath, []string{"setup"}, &stdout0, &stderr0)
+	require.NoError(t, err, "setup err: %s", stderr0.String())
+	assert.Equal(t, 0, result0.ExitCode)
+	assert.Equal(t, "ready", stdout0.String())
+
+	// Group step: kubectl get pods → captures first_pod
+	var stdout1, stderr1 bytes.Buffer
+	result1, err := ExecuteReplay(scenarioPath, []string{"kubectl", "get", "pods"}, &stdout1, &stderr1)
+	require.NoError(t, err, "pods err: %s", stderr1.String())
+	assert.Equal(t, 0, result1.ExitCode)
+	assert.Equal(t, "web-pod-1", stdout1.String())
+
+	// Group step: kubectl get svc → references first_pod + base_id
+	var stdout2, stderr2 bytes.Buffer
+	result2, err := ExecuteReplay(scenarioPath, []string{"kubectl", "get", "svc"}, &stdout2, &stderr2)
+	require.NoError(t, err, "svc err: %s", stderr2.String())
+	assert.Equal(t, 0, result2.ExitCode)
+	assert.Equal(t, "svc for web-pod-1 base=base-123", stdout2.String())
+
+	// Step after group: teardown → references base_id
+	var stdout3, stderr3 bytes.Buffer
+	result3, err := ExecuteReplay(scenarioPath, []string{"teardown"}, &stdout3, &stderr3)
+	require.NoError(t, err, "teardown err: %s", stderr3.String())
+	assert.Equal(t, 0, result3.ExitCode)
+	assert.Equal(t, "done base=base-123", stdout3.String())
+}
+
+// Test capture within group when sibling capture is not yet available (best-effort).
+// Execute svc before pods — first_pod hasn't been captured yet, resolves to empty.
+func TestIntegration_CaptureGroup_BestEffort(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	scenarioContent := `
+meta:
+  name: capture-group-besteffort
+steps:
+  - match:
+      argv: ["setup"]
+    respond:
+      exit: 0
+      stdout: "ready"
+      capture:
+        base_id: "base-123"
+
+  - group:
+      mode: unordered
+      name: monitoring
+      steps:
+        - match:
+            argv: ["kubectl", "get", "pods"]
+          respond:
+            exit: 0
+            stdout: "web-pod-1"
+            capture:
+              first_pod: "web-pod-1"
+
+        - match:
+            argv: ["kubectl", "get", "svc"]
+          respond:
+            exit: 0
+            stdout: 'svc for [{{ .capture.first_pod }}] base={{ .capture.base_id }}'
+`
+	scenarioPath := filepath.Join(tmpDir, "scenario.yaml")
+	require.NoError(t, os.WriteFile(scenarioPath, []byte(scenarioContent), 0600))
+
+	// Step 0: setup → captures base_id
+	var stdout0, stderr0 bytes.Buffer
+	_, err := ExecuteReplay(scenarioPath, []string{"setup"}, &stdout0, &stderr0)
+	require.NoError(t, err)
+
+	// Execute svc BEFORE pods — first_pod not yet captured, should resolve to empty
+	var stdout1, stderr1 bytes.Buffer
+	result1, err := ExecuteReplay(scenarioPath, []string{"kubectl", "get", "svc"}, &stdout1, &stderr1)
+	require.NoError(t, err, "svc err: %s", stderr1.String())
+	assert.Equal(t, 0, result1.ExitCode)
+	// first_pod is empty (not captured yet), base_id is available from step 0
+	assert.Equal(t, "svc for [] base=base-123", stdout1.String())
+}

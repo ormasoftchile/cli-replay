@@ -932,6 +932,88 @@ func TestCleanExpiredSessions_SkipsNonStateFiles(t *testing.T) {
 	assert.FileExists(t, otherFile)
 }
 
+// T013: State round-trip tests for Captures field
+
+func TestState_Captures_Initialization(t *testing.T) {
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+	require.NotNil(t, state.Captures)
+	assert.Empty(t, state.Captures)
+}
+
+func TestState_Captures_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "captures.state")
+
+	state := NewState("/path/to/scenario.yaml", "hash", 3)
+	state.Captures["rg_id"] = "/subscriptions/abc/resourceGroups/demo-rg"
+	state.Captures["vm_id"] = "/subscriptions/abc/vms/vm-1"
+
+	// Write
+	err := WriteState(stateFile, state)
+	require.NoError(t, err)
+
+	// Read back
+	loaded, err := ReadState(stateFile)
+	require.NoError(t, err)
+
+	require.NotNil(t, loaded.Captures)
+	assert.Equal(t, "/subscriptions/abc/resourceGroups/demo-rg", loaded.Captures["rg_id"])
+	assert.Equal(t, "/subscriptions/abc/vms/vm-1", loaded.Captures["vm_id"])
+}
+
+func TestState_Captures_BackwardCompat_OldStateNoCapturesKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "old.state")
+
+	// Write a state JSON without the captures key (simulates old state file)
+	oldJSON := `{
+		"scenario_path": "/path/to/scenario.yaml",
+		"scenario_hash": "abc123",
+		"current_step": 1,
+		"total_steps": 3,
+		"step_counts": [1, 0, 0],
+		"last_updated": "2026-02-07T10:00:00Z"
+	}`
+	err := os.WriteFile(stateFile, []byte(oldJSON), 0600)
+	require.NoError(t, err)
+
+	// Read — should succeed, captures should be nil (safe)
+	loaded, err := ReadState(stateFile)
+	require.NoError(t, err)
+	assert.Nil(t, loaded.Captures, "old state files without captures key should have nil Captures")
+}
+
+func TestState_Captures_EmptyMapRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "empty-captures.state")
+
+	state := NewState("/path/to/scenario.yaml", "hash", 2)
+	// Captures is initialized to empty map by NewState
+
+	err := WriteState(stateFile, state)
+	require.NoError(t, err)
+
+	// Read back — omitempty means captures key may be omitted
+	_, err = ReadState(stateFile)
+	require.NoError(t, err)
+	// With omitempty, empty map[string]string is omitted in JSON.
+	// On deserialization, the field is nil. Both are safe for runtime usage
+	// (nil map reads return zero-value, and we merge into state.Captures
+	// only when step has captures).
+}
+
+func TestState_Captures_OmittedInJSON_WhenEmpty(t *testing.T) {
+	// Verify that captures with nil map is omitted from JSON (omitempty)
+	state := &State{
+		ScenarioPath: "/path",
+		ScenarioHash: "hash",
+		LastUpdated:  time.Now().UTC(),
+	}
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "captures")
+}
+
 // T032: Benchmark test — 50 state files, CleanExpiredSessions should complete in < 2s.
 func TestCleanExpiredSessions_Benchmark50Files(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -151,6 +151,8 @@ steps:
       stderr: "error message"      # Optional: literal stderr
       stdout_file: "fixtures/out.txt"  # Optional: file-based stdout
       stderr_file: "fixtures/err.txt"  # Optional: file-based stderr
+      capture:                     # Optional: capture key-value pairs for later steps
+        rg_id: "/subscriptions/abc123/resourceGroups/demo-rg"
     calls:                         # Optional: call count bounds (default: exactly once)
       min: 1                       # Minimum invocations required
       max: 5                       # Maximum invocations allowed
@@ -168,6 +170,9 @@ steps:
 - `calls.min: 0` creates an optional step (can be skipped entirely)
 - `deny_env_vars` entries must be non-empty strings (glob patterns via `path.Match`)
 - `session.ttl` must be a valid Go duration (`time.ParseDuration`) and positive
+- `capture` identifiers must match `[a-zA-Z_][a-zA-Z0-9_]*`
+- `capture` keys must not conflict with `meta.vars` keys
+- Templates referencing `{{ .capture.X }}` must not forward-reference (X must be defined in an earlier step)
 - Unknown fields are rejected (strict YAML parsing)
 
 ### Step Groups (Unordered Matching)
@@ -292,6 +297,7 @@ cli-replay run scenario.yaml
 | `--shell` | string | auto-detect | Output format: `powershell`, `bash`, `cmd` |
 | `--allowed-commands` | string | `""` | Comma-separated list of commands allowed to be intercepted |
 | `--max-delay` | string | `5m` | Maximum allowed delay duration (e.g., `5m`, `30s`) |
+| `--dry-run` | bool | `false` | Preview the scenario step sequence without creating intercepts |
 
 #### Security Allowlist
 
@@ -364,6 +370,7 @@ This is the recommended mode for CI pipelines. No `eval`, no manual cleanup.
 | `--allowed-commands` | string | `""` | Comma-separated list of commands allowed to be intercepted |
 | `--format` | string | `""` | Output format for verification: `json`, `junit`, or `text` |
 | `--report-file` | string | `""` | Write structured verification output to a file path |
+| `--dry-run` | bool | `false` | Preview the scenario without spawning a child process |
 
 When `--report-file` is set, verification results are written to the specified file. When `--format` is set without `--report-file`, structured output goes to stderr (stdout is reserved for the child process).
 
@@ -555,6 +562,54 @@ steps:
 
 - `{{ .any }}` — matches any single argument value
 - `{{ .regex "pattern" }}` — matches if the argument matches the given regex
+
+## Dynamic Capture — Chaining Output Between Steps
+
+Use `respond.capture` to store key-value pairs from a step's response, then reference them in later steps via `{{ .capture.<id> }}`:
+
+```yaml
+meta:
+  name: capture-demo
+  vars:
+    region: eastus
+
+steps:
+  - match:
+      argv: ["az", "group", "create", "--name", "demo-rg", "--location", "{{ .region }}"]
+    respond:
+      exit: 0
+      stdout: '{"id": "/subscriptions/abc123/resourceGroups/demo-rg"}'
+      capture:
+        rg_id: "/subscriptions/abc123/resourceGroups/demo-rg"
+
+  - match:
+      argv: ["az", "vm", "create", "--resource-group", "demo-rg"]
+    respond:
+      exit: 0
+      stdout: 'VM created in group {{ .capture.rg_id }}'
+```
+
+**Behavior**:
+- Captures are accumulated across steps — each step can reference captures from any prior step
+- Capture identifiers must match `[a-zA-Z_][a-zA-Z0-9_]*`
+- A capture key cannot conflict with a `meta.vars` key (validated at load time)
+- Forward references (referencing a capture before its defining step) are rejected at load time
+- In unordered groups, sibling captures resolve to empty string (best-effort) if the defining step hasn't run yet
+- Optional steps (`calls.min: 0`) that are never invoked do not add their captures
+
+## Dry-Run Mode — Preview Without Side Effects
+
+Use `--dry-run` on `run` or `exec` to preview a scenario's step sequence without creating intercepts, spawning child processes, or modifying state:
+
+```bash
+# Preview with run
+cli-replay run --dry-run scenario.yaml
+
+# Preview with exec
+cli-replay exec --dry-run scenario.yaml -- make deploy
+```
+
+The dry-run output shows numbered steps with match patterns, exit codes, call bounds, group membership, captures, template variables, allowlist validation, and stdout previews. No files are created and no child processes are started.
 
 ## Call Count Bounds
 
@@ -790,6 +845,20 @@ Also verify PATHEXT includes `.CMD` (it does by default on Windows 10+):
 
 ```powershell
 $env:PATHEXT  # Should contain .CMD
+```
+
+### Windows: Signal Handling (Ctrl+C / Process Termination)
+
+On Unix, cli-replay forwards `SIGINT` and `SIGTERM` to child processes during `exec` mode. On Windows, `SIGTERM` is not supported — cli-replay uses `Process.Kill()` instead when Ctrl+C is pressed.
+
+**Known limitations on Windows:**
+- `Process.Kill()` does not propagate to grandchild processes. If your child spawns sub-processes, they may be orphaned after Ctrl+C
+- There is no graceful shutdown option — the child is killed immediately
+- If cleanup fails due to orphaned grandchildren, run `cli-replay clean` manually to remove stale state and intercept directories
+
+```powershell
+# Manual cleanup after unexpected termination on Windows
+cli-replay clean scenario.yaml
 ```
 
 ## License

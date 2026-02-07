@@ -16,15 +16,16 @@ import (
 
 // State tracks scenario progress across CLI invocations.
 type State struct {
-	ScenarioPath  string    `json:"scenario_path"`
-	ScenarioHash  string    `json:"scenario_hash"`
-	CurrentStep   int       `json:"current_step"`
-	TotalSteps    int       `json:"total_steps"`
-	StepCounts    []int     `json:"step_counts,omitempty"`
-	ConsumedSteps []bool    `json:"consumed_steps,omitempty"` // deprecated: read-only migration
-	ActiveGroup   *int      `json:"active_group,omitempty"`
-	InterceptDir  string    `json:"intercept_dir,omitempty"`
-	LastUpdated   time.Time `json:"last_updated"`
+	ScenarioPath  string            `json:"scenario_path"`
+	ScenarioHash  string            `json:"scenario_hash"`
+	CurrentStep   int               `json:"current_step"`
+	TotalSteps    int               `json:"total_steps"`
+	StepCounts    []int             `json:"step_counts,omitempty"`
+	ConsumedSteps []bool            `json:"consumed_steps,omitempty"` // deprecated: read-only migration
+	ActiveGroup   *int              `json:"active_group,omitempty"`
+	InterceptDir  string            `json:"intercept_dir,omitempty"`
+	LastUpdated   time.Time         `json:"last_updated"`
+	Captures      map[string]string `json:"captures,omitempty"`
 }
 
 // IsInGroup returns true if the state is currently inside a step group.
@@ -319,6 +320,7 @@ func NewState(scenarioPath, scenarioHash string, totalSteps int) *State {
 		CurrentStep:  0,
 		TotalSteps:   totalSteps,
 		StepCounts:   make([]int, totalSteps),
+		Captures:     make(map[string]string),
 		LastUpdated:  time.Now().UTC(),
 	}
 }

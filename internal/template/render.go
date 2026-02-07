@@ -43,6 +43,43 @@ func RenderWithEnv(tmpl string, vars map[string]string) (string, error) {
 	return Render(tmpl, merged)
 }
 
+// RenderWithCaptures renders a Go text/template with vars and captures.
+// Vars are top-level keys, captures are nested under the "capture" namespace.
+// Uses missingkey=zero so that unresolved capture references (from optional
+// steps or unordered group siblings) resolve to empty string instead of
+// erroring. Top-level variable access still errors on missing keys because
+// the template data map only contains declared keys.
+func RenderWithCaptures(tmpl string, vars map[string]string, captures map[string]string) (string, error) {
+	if tmpl == "" {
+		return "", nil
+	}
+
+	t, err := template.New("response").Option("missingkey=zero").Parse(tmpl)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	// Build data map: flat vars + nested capture namespace
+	data := make(map[string]interface{}, len(vars)+1)
+	for k, v := range vars {
+		data[k] = v
+	}
+
+	// Add captures under the "capture" key
+	captureMap := make(map[string]string)
+	for k, v := range captures {
+		captureMap[k] = v
+	}
+	data["capture"] = captureMap
+
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
 // MergeVars merges scenario vars with environment variables.
 // Environment variables override scenario vars.
 func MergeVars(vars map[string]string) map[string]string {
