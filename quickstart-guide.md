@@ -160,10 +160,13 @@ Intercepts only `kubectl` and `docker` calls from the script. Each intercepted c
 
 | Command | Description |
 |---------|-------------|
+| `cli-replay exec <scenario.yaml> -- <cmd>` | Full lifecycle: setup, run child, verify, cleanup (recommended) |
 | `cli-replay run <scenario.yaml>` | Create intercepts, init state, emit env setup to stdout |
 | `cli-replay run --shell bash <s>` | Force output format (powershell, bash, cmd) |
 | `cli-replay verify <scenario.yaml>` | Check all steps consumed (exit 0 = complete) |
+| `cli-replay validate <scenario.yaml>` | Check scenario for schema/semantic errors without executing |
 | `cli-replay clean` | Remove intercept dir + delete state file |
+| `cli-replay clean --ttl 10m --recursive .` | Bulk cleanup of expired sessions |
 | `cli-replay record -o <file> -- <cmd>` | Record a real command into YAML |
 | `cli-replay --version` | Print version |
 | `cli-replay --help` | Show usage |
@@ -206,24 +209,44 @@ meta:
   description: "What this tests"   # Optional
   vars:                            # Optional: template variables
     namespace: "production"
+  security:                        # Optional: restrict interceptable commands
+    allowed_commands:
+      - kubectl
+    deny_env_vars:                 # Optional: block env vars from templates
+      - "AWS_*"
+  session:                         # Optional: auto-cleanup stale sessions
+    ttl: "10m"
 
 steps:
   - match:
       argv: ["kubectl", "get", "pods", "-n", "{{ .namespace }}"]
+      stdin: |                     # Optional: expected piped input
+        apiVersion: v1
     respond:
       exit: 0                      # Required: 0-255
       stdout: "inline output"      # Optional
       stderr: "error text"         # Optional
       stdout_file: "fixtures/out.txt"  # Optional: load from file
       stderr_file: "fixtures/err.txt"  # Optional: load from file
+      delay: "500ms"               # Optional: artificial response delay
+      capture:                     # Optional: capture values for later steps
+        pod_name: "web-0"
+    when: '{{ .capture.ready }}'   # Optional: conditional (reserved, not yet evaluated)
+    calls:                         # Optional: call count bounds
+      min: 1
+      max: 5
 ```
 
 - `stdout` and `stdout_file` are mutually exclusive
+- `stderr` and `stderr_file` are mutually exclusive
 - Template variables use Go `text/template` syntax: `{{ .varName }}`
 - Environment variables override `meta.vars`
 - Unknown YAML fields are rejected (strict parsing)
 - Use `{{ .any }}` in `match.argv` to match any single argument
 - Use `{{ .regex "pattern" }}` in `match.argv` for regex matching
+- Use `respond.capture` to chain values between steps (reference via `{{ .capture.<id> }}`)
+- Use `calls.min`/`calls.max` for retry loops and optional steps
+- Use step groups with `mode: unordered` for order-independent matching
 
 ---
 
@@ -241,5 +264,6 @@ az account show --query id -o tsv
 
 ## Limitations
 
-- **Strict ordering** — steps must match in exact sequence
-- **No parallel execution** — state is single-threaded per scenario
+- **Strict ordering** — steps must match in exact sequence (use step groups for unordered matching)
+- **No parallel execution** — state is single-threaded per scenario (session isolation supports parallel test runs)
+- **Fixed responses** — no conditional or dynamic response logic based on runtime state

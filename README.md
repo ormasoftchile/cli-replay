@@ -170,8 +170,10 @@ steps:
       stderr: "error message"      # Optional: literal stderr
       stdout_file: "fixtures/out.txt"  # Optional: file-based stdout
       stderr_file: "fixtures/err.txt"  # Optional: file-based stderr
+      delay: "500ms"               # Optional: artificial delay before responding (Go duration)
       capture:                     # Optional: capture key-value pairs for later steps
         rg_id: "/subscriptions/abc123/resourceGroups/demo-rg"
+    when: '{{ .capture.ready }}'   # Optional: conditional expression (reserved, not yet evaluated)
     calls:                         # Optional: call count bounds (default: exactly once)
       min: 1                       # Minimum invocations required
       max: 5                       # Maximum invocations allowed
@@ -193,6 +195,8 @@ steps:
 - `capture` identifiers must match `[a-zA-Z_][a-zA-Z0-9_]*`
 - `capture` keys must not conflict with `meta.vars` keys
 - Templates referencing `{{ .capture.X }}` must not forward-reference (X must be defined in an earlier step)
+- `when` is accepted by the schema and parsed but not yet evaluated at runtime (reserved for future use)
+- `delay` must be a valid Go duration (`time.ParseDuration`) when specified (e.g., `100ms`, `1s`, `2.5s`)
 - Unknown fields are rejected (strict YAML parsing)
 
 ### Step Groups (Unordered Matching)
@@ -413,6 +417,12 @@ cli-replay verify scenario.yaml
 ```
 
 Exit code 0 if all steps met their minimum call counts, 1 if steps remain unsatisfied.
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format` | string | `text` | Output format: `text`, `json`, or `junit` |
 
 #### Structured Output
 
@@ -884,6 +894,25 @@ golangci-lint run
 .\build.ps1 -Test
 .\build.ps1 -Lint
 ```
+
+### Integration Tests
+
+Windows-specific integration tests are gated behind a build tag and test-name prefix:
+
+```powershell
+# Build the binary first (integration tests invoke it)
+go build -o cli-replay.exe .
+
+# Run Windows integration tests
+go test -v -count=1 -timeout 10m -tags integration -run "TestWindows" ./...
+```
+
+```bash
+# On Unix (these tests are skipped — they require windows && integration tags)
+go test -tags integration -run "TestWindows" ./...  # no-op on Linux/macOS
+```
+
+Integration tests cover exec lifecycle, Job Object process-tree management, recording shim end-to-end, concurrent session isolation, path edge cases (spaces, Unicode, long paths), and allowlist enforcement. They are run automatically in CI via the `windows-hardening` GitHub Actions job.
 
 ## Platform Support
 
