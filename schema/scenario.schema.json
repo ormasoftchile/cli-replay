@@ -31,8 +31,9 @@
         "name": {
           "type": "string",
           "minLength": 1,
-          "description": "Scenario name. Must be non-empty.",
-          "markdownDescription": "Scenario name. Must be non-empty."
+          "pattern": "\\S",
+          "description": "Scenario name. Must be non-empty and contain at least one non-whitespace character.",
+          "markdownDescription": "Scenario name. Must be non-empty and contain at least one non-whitespace character."
         },
         "description": {
           "type": "string",
@@ -41,8 +42,8 @@
         },
         "vars": {
           "type": "object",
-          "description": "Template variables for dynamic content substitution in stdout/stderr fields.",
-          "markdownDescription": "Template variables for dynamic content substitution in `stdout`/`stderr` fields. Use `{{.vars.key}}` syntax in response fields.",
+          "description": "Template variables for dynamic content substitution in stdout/stderr fields. Use {{ .key }} syntax. See also respond.capture for cross-step variable chaining.",
+          "markdownDescription": "Template variables for dynamic content substitution in `stdout`/`stderr` fields. Use `{{ .key }}` syntax in response fields. See also `respond.capture` for cross-step variable chaining via `{{ .capture.key }}`.",
           "additionalProperties": {
             "type": "string"
           }
@@ -60,7 +61,7 @@
               "type": "string",
               "description": "Time-to-live for replay sessions. Sessions older than this are auto-cleaned. Go duration format (e.g., '5m', '1h', '30s').",
               "markdownDescription": "Time-to-live for replay sessions. Sessions older than this are auto-cleaned. Go duration format (e.g., `5m`, `1h`, `30s`).",
-              "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)+$"
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
             }
           }
         }
@@ -82,8 +83,8 @@
         },
         "deny_env_vars": {
           "type": "array",
-          "description": "Deny-list of environment variable name patterns. Matching vars are replaced with empty strings in template rendering. Supports glob patterns (* wildcard).",
-          "markdownDescription": "Deny-list of environment variable name patterns. Matching vars have their env overrides suppressed in template rendering. Supports glob patterns (`*` wildcard).",
+          "description": "Deny-list of environment variable name patterns. Matching vars have their env overrides blocked, falling back to meta.vars defaults (or empty string). Supports path.Match glob patterns (* wildcard).",
+          "markdownDescription": "Deny-list of environment variable name patterns. Matching vars have their env overrides blocked, falling back to `meta.vars` defaults (or empty string). Supports `path.Match` glob patterns (`*` wildcard).",
           "items": {
             "type": "string",
             "minLength": 1
@@ -135,8 +136,8 @@
       "properties": {
         "argv": {
           "type": "array",
-          "description": "Command and arguments to match. First element is the command name, rest are arguments. Supports glob patterns.",
-          "markdownDescription": "Command and arguments to match. First element is the command name, rest are arguments. Supports glob patterns (e.g., `*`, `**`).",
+          "description": "Command and arguments to match. First element is the command name, rest are arguments. Supports {{ .any }} wildcards and {{ .regex \"...\" }} patterns.",
+          "markdownDescription": "Command and arguments to match. First element is the command name, rest are arguments. Supports `{{ .any }}` wildcards and `{{ .regex \"...\" }}` patterns.",
           "minItems": 1,
           "items": {
             "type": "string"
@@ -185,8 +186,20 @@
         },
         "delay": {
           "type": "string",
-          "description": "Response delay in Go duration format (e.g., '100ms', '1s', '2.5s').",
-          "markdownDescription": "Response delay in Go duration format (e.g., `100ms`, `1s`, `2.5s`)."
+          "description": "Response delay in Go duration format (e.g., '100ms', '1s', '2.5s'). Must be a valid time.ParseDuration value.",
+          "markdownDescription": "Response delay in Go duration format (e.g., `100ms`, `1s`, `2.5s`). Must be a valid `time.ParseDuration` value.",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+        },
+        "capture": {
+          "type": "object",
+          "description": "Key-value pairs to capture from this step's response for use in later steps via {{ .capture.<key> }}. Keys must match [a-zA-Z_][a-zA-Z0-9_]* and must not conflict with meta.vars keys. Forward references (referencing a capture before its defining step) are rejected at load time.",
+          "markdownDescription": "Key-value pairs to capture from this step's response for use in later steps via `{{ .capture.<key> }}`. Keys must match `[a-zA-Z_][a-zA-Z0-9_]*` and must not conflict with `meta.vars` keys. Forward references are rejected at load time.",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+              "type": "string"
+            }
+          }
         }
       },
       "allOf": [
@@ -214,21 +227,23 @@
     },
     "calls": {
       "type": "object",
-      "description": "Invocation bounds for this step. Defaults to {min: 1, max: 1} when omitted.",
-      "markdownDescription": "Invocation bounds for this step. Defaults to `{min: 1, max: 1}` when omitted.",
+      "description": "Invocation bounds for this step. Defaults to {min: 1, max: 1} when omitted (exactly once). If only min is set, max defaults to min.",
+      "markdownDescription": "Invocation bounds for this step. Defaults to `{min: 1, max: 1}` when omitted (exactly once). If only `min` is set, `max` auto-defaults to `min`. Constraint: `min ≤ max`.",
       "additionalProperties": false,
       "properties": {
         "min": {
           "type": "integer",
           "minimum": 0,
-          "description": "Minimum number of times this step must be invoked. 0 means optional.",
-          "markdownDescription": "Minimum number of times this step must be invoked. `0` means optional."
+          "default": 1,
+          "description": "Minimum number of times this step must be invoked. 0 means optional. Defaults to 1.",
+          "markdownDescription": "Minimum number of times this step must be invoked. `0` means optional. Defaults to `1`. Must be `≤ max`."
         },
         "max": {
           "type": "integer",
           "minimum": 1,
-          "description": "Maximum number of times this step may be invoked. Must be >= 1.",
-          "markdownDescription": "Maximum number of times this step may be invoked. Must be `≥ 1`."
+          "default": 1,
+          "description": "Maximum number of times this step may be invoked. Must be >= 1. Defaults to 1 (or to min if only min is specified).",
+          "markdownDescription": "Maximum number of times this step may be invoked. Must be `≥ 1`. Defaults to `1` (or to `min` if only `min` is specified)."
         }
       }
     },
