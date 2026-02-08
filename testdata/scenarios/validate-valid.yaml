@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+meta:
+  name: "validate-valid-test"
+  description: "Minimal valid scenario for cli-replay validate tests"
+  vars:
+    namespace: "default"
+  security:
+    allowed_commands:
+      - kubectl
+
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods", "-n", "{{ .namespace }}"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME    READY   STATUS    RESTARTS   AGE
+        web-0   1/1     Running   0          5m

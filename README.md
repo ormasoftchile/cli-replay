@@ -313,6 +313,8 @@ cli-replay run --allowed-commands kubectl,az scenario.yaml
 
 If a scenario step references a command not in the allowlist, `cli-replay run` exits with an error before creating any intercepts.
 
+> 📖 See [SECURITY.md](SECURITY.md) for the full threat model, trust boundaries, and security recommendations.
+
 ### cli-replay verify
 
 Check all steps were satisfied:
@@ -538,6 +540,8 @@ meta:
 - Internal variables (`CLI_REPLAY_*`) are always exempt from deny rules
 - When `CLI_REPLAY_TRACE=1`, denied variables are logged: `cli-replay[trace]: denied env var SECRET_KEY`
 - If no `deny_env_vars` is configured, all env vars pass through (backward compatible)
+
+> 📖 See [SECURITY.md](SECURITY.md) for a complete list of security controls and known limitations.
 
 ## Dynamic Matching
 
@@ -864,3 +868,7 @@ cli-replay clean scenario.yaml
 ## License
 
 MIT
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security policy, vulnerability reporting process, threat model, and recommendations.

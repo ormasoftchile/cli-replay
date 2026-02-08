@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+
+# Helm Deployment — repo add / upgrade --install / status
+#
+# Demonstrates:
+#   - Template variables (meta.vars) for customizable deployment names
+#   - Capture values from one step and reference in later steps
+#   - Realistic multi-line helm output
+#   - Security allowlist
+#
+# Usage:
+#   cli-replay validate examples/cookbook/helm-deployment.yaml
+#   cli-replay exec examples/cookbook/helm-deployment.yaml -- bash examples/cookbook/helm-test.sh
+
+meta:
+  name: "helm-deployment"
+  description: "Helm repo add / upgrade --install / status with captures"
+  vars:
+    release_name: "myrelease"
+    chart_repo: "bitnami"
+    chart_name: "nginx"
+  security:
+    allowed_commands:
+      - helm
+
+steps:
+  # Step 1: Add the Helm chart repository
+  - match:
+      argv: ["helm", "repo", "add", "bitnami", "https://charts.bitnami.com/bitnami"]
+    respond:
+      exit: 0
+      stdout: |
+        "bitnami" has been added to your repositories
+
+  # Step 2: Install or upgrade the release
+  #   Capture the revision number for verification in step 3
+  - match:
+      argv: ["helm", "upgrade", "--install", "{{ .release_name }}", "bitnami/{{ .chart_name }}"]
+    respond:
+      exit: 0
+      stdout: |
+        Release "{{ .release_name }}" has been upgraded. Happy Helming!
+        NAME: {{ .release_name }}
+        LAST DEPLOYED: Mon Jan 15 10:30:00 2024
+        NAMESPACE: default
+        STATUS: deployed
+        REVISION: 3
+      capture:
+        revision: "3"
+
+  # Step 3: Check release status — references captured revision
+  - match:
+      argv: ["helm", "status", "{{ .release_name }}"]
+    respond:
+      exit: 0
+      stdout: |
+        NAME: {{ .release_name }}
+        LAST DEPLOYED: Mon Jan 15 10:30:00 2024
+        NAMESPACE: default
+        STATUS: deployed
+        REVISION: {{ .capture.revision }}
+        NOTES:
+          CHART NAME: {{ .chart_name }}
+          Get the application URL by running:
+            kubectl get svc --namespace default {{ .release_name }}-nginx

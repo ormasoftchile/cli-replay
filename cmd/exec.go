@@ -223,7 +223,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	childCmd.Stderr = os.Stderr
 
 	// Set up signal forwarding (platform-specific: see exec_unix.go / exec_windows.go)
-	cleanupSignals := setupSignalForwarding(childCmd)
+	postStartHook, cleanupSignals := setupSignalForwarding(childCmd)
 
 	if err := childCmd.Start(); err != nil {
 		cleanupSignals()
@@ -231,6 +231,9 @@ func runExec(cmd *cobra.Command, args []string) error {
 		ExecExitCode = exitCodeForStartError(err)
 		return fmt.Errorf("failed to start child process: %w", err)
 	}
+
+	// Platform-specific post-start hook (Windows: assign to job object + resume)
+	postStartHook()
 
 	waitErr := childCmd.Wait()
 	cleanupSignals()
