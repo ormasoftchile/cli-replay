@@ -1,0 +1,52 @@
+# Contract: Release Workflow
+
+**File**: `.github/workflows/release.yml`  
+**Trigger**: Push tag matching `v*`  
+**Purpose**: Automated release pipeline via GoReleaser
+
+## Workflow Schema
+
+```yaml
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+## Contract Guarantees
+
+- Tests must pass before release artifacts are produced
+- `fetch-depth: 0` ensures full git history for changelog generation
+- `contents: write` permission is required to create GitHub Releases
+- GoReleaser configuration is read from `.goreleaser.yaml` at repo root

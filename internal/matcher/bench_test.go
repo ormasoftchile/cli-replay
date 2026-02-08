@@ -60,3 +60,30 @@ func BenchmarkGroupMatch_50(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkRegexPathological exercises a known-pathological regex pattern
+// against a non-matching input to demonstrate that Go's RE2 engine handles
+// it safely in linear time. In PCRE engines this pattern causes exponential
+// backtracking; in RE2 it completes in microseconds.
+//
+// Pattern: ^(a+)+$  Input: "aaa...ab" (50 chars)
+// See: SECURITY.md "Regex Safety (ReDoS Prevention)" section.
+func BenchmarkRegexPathological(b *testing.B) {
+	// 49 'a's followed by 'b' — guarantees no match.
+	input := make([]byte, 50)
+	for i := 0; i < 49; i++ {
+		input[i] = 'a'
+	}
+	input[49] = 'b'
+	inputStr := string(input)
+
+	// The pattern uses grouping + repetition that triggers exponential
+	// backtracking in PCRE but is O(n) in RE2.
+	pattern := []string{"{{ .regex `^(a+)+$` }}"}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ArgvMatch(pattern, []string{inputStr})
+	}
+}

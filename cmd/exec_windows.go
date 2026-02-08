@@ -136,3 +136,10 @@ func setupSignalForwardingFallback(childCmd *exec.Cmd) func() {
 		close(sigCh)
 	}
 }
+
+// retryWithoutProcessGroup is a no-op on Windows. Windows uses Job Objects
+// for process tree management (not Unix process groups). If the initial
+// Start() fails on Windows, there is no Setpgid to clear.
+func retryWithoutProcessGroup(_ *exec.Cmd) error {
+	return fmt.Errorf("process start retry not supported on Windows")
+}

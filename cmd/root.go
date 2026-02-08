@@ -2,11 +2,17 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
-// Version is set at build time via -ldflags.
-var Version = "dev"
+// Version, Commit, and Date are set at build time via -ldflags.
+var (
+	Version = "dev"
+	Commit  = "none"
+	Date    = "unknown"
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "cli-replay",
@@ -44,5 +50,5 @@ func Execute() error {
 }
 
 func init() { //nolint:gochecknoinits
-	rootCmd.SetVersionTemplate("cli-replay version {{.Version}}\n")
+	rootCmd.SetVersionTemplate(fmt.Sprintf("cli-replay version {{.Version}} (commit: %s, built: %s)\n", Commit, Date))
 }
