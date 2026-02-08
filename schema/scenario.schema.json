@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json",
+  "$id": "https://raw.githubusercontent.com/ormasoftchile/cli-replay/main/schema/scenario.schema.json",
   "title": "cli-replay Scenario",
   "description": "Schema for cli-replay scenario YAML files. Defines the structure for recording and replaying CLI command interactions.",
   "type": "object",

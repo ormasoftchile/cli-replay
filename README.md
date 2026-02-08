@@ -1,6 +1,6 @@
 # cli-replay
 
-[![CI](https://github.com/cli-replay/cli-replay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cli-replay/cli-replay/actions/workflows/ci.yml)
+[![CI](https://github.com/ormasoftchile/cli-replay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ormasoftchile/cli-replay/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.21-blue?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
@@ -691,7 +691,7 @@ cli-replay provides a JSON Schema for scenario YAML files, enabling IDE autocomp
 Add this comment as the first line of any scenario YAML file:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ormasoftchile/cli-replay/main/schema/scenario.schema.json
 meta:
   name: my-scenario
 steps:
@@ -708,7 +708,7 @@ To apply the schema to all YAML files matching `*scenario*.yaml` or `*recording*
 ```json
 {
   "yaml.schemas": {
-    "https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json": [
+    "https://raw.githubusercontent.com/ormasoftchile/cli-replay/main/schema/scenario.schema.json": [
       "**/scenarios/**/*.yaml",
       "**/recordings/**/*.yaml",
       "**/examples/**/*.yaml"
