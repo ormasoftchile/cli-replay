@@ -18,12 +18,13 @@ Record real command executions, replay them deterministically, and verify that y
 - **Environment variable filtering** — block sensitive env vars from leaking into template rendering via glob patterns (`deny_env_vars`)
 - **Session TTL** — automatically clean up stale replay sessions older than a configurable duration
 - **Rich mismatch diagnostics** — per-element diff with color output, regex pattern display, and length mismatch detail
+- **Standalone validation** — `cli-replay validate` checks scenario files for schema and semantic correctness without executing them — no side effects, no state files, no PATH changes
 - **Runs cross-platform** — single Go binary, no runtime dependencies, works on macOS, Linux, and Windows
 
 ## What cli-replay Does NOT Do
 
 - **Does not test application logic** — it validates *orchestration* (which commands run, in what order, with what flags), not business logic. Use unit tests and in-process mocks for that.
-- **Does not support parallel/unordered execution** — steps are matched in strict sequence. If your workflow runs commands concurrently, cli-replay cannot validate that today.
+- **Does not support parallel execution** — steps are matched sequentially. [Step groups](#step-groups-unordered-matching) support unordered matching within a group, but fully concurrent step execution across groups is not supported.
 - **Does not emulate real APIs** — it replays fixed responses. If you need real service behavior, use Testcontainers or LocalStack.
 - **Does not perform load/performance testing** — it's for functional validation of command sequences.
 - **Does not modify your code** — it's a pure black-box tool. No interfaces, no dependency injection, no code changes required.
@@ -36,14 +37,14 @@ Record real command executions, replay them deterministically, and verify that y
 | Testing deployment scripts that call multiple CLIs | Load or performance testing |
 | CI smoke tests for multi-tool workflows | Testing application business logic |
 | Ensuring scripts call the right commands with correct flags | Emulating stateful service behavior |
-| Validating piped stdin content in CLI workflows | Testing concurrent/parallel command execution |
+| Validating piped stdin content in CLI workflows | Testing fully concurrent command execution |
 | Recording golden-path command sequences for regression | Dynamic response logic based on runtime state |
 
 ## How It Compares
 
 | Tool | Approach | Best For | Trade-offs |
 |------|----------|----------|------------|
-| **cli-replay** | PATH interception + record/replay | CLI orchestration workflows | Strict ordering, no parallel execution |
+| `cli-replay` | PATH interception + record/replay | CLI orchestration workflows | Sequential matching (groups for unordered) |
 | bats + mocking | Shell function overrides | Simple shell script tests | Manual mock maintenance, not cross-platform |
 | Testcontainers | Real services in containers | Integration tests | Slow startup, resource-intensive |
 | LocalStack | AWS API emulation | AWS-specific workflows | Limited to AWS, requires Docker |
@@ -68,7 +69,8 @@ go install github.com/cli-replay/cli-replay@latest
 # From source (Windows)
 go build -o cli-replay.exe .
 
-# Or download binary from releases
+# Or download a pre-built binary from GitHub Releases:
+# https://github.com/cli-replay/cli-replay/releases
 ```
 
 ## Quick Start
@@ -89,36 +91,53 @@ steps:
         web-0   1/1     Running   0          5m
 ```
 
-### 2. Setup fake kubectl
+### 2. Validate the scenario
+
+```bash
+cli-replay validate scenario.yaml
+# ✓ scenario.yaml: valid
+```
+
+### 3. Run with `exec` (recommended)
+
+`exec` handles the full lifecycle — setup, run, verify, and cleanup — in a single command:
+
+```bash
+cli-replay exec scenario.yaml -- bash -c 'kubectl get pods'
+```
+
+```powershell
+# Windows
+cli-replay.exe exec scenario.yaml -- cmd /c "kubectl get pods"
+```
+
+Output:
+```
+NAME    READY   STATUS    RESTARTS   AGE
+web-0   1/1     Running   0          5m
+✓ Scenario "kubectl-demo" completed: 1/1 steps consumed
+```
+
+Exit code 0 means the child process succeeded **and** all scenario steps were satisfied.
+
+### Alternative: Manual `run` + `eval` pattern
+
+For interactive shell sessions or when you need fine-grained control:
 
 **Unix (macOS/Linux):**
 ```bash
-# Initialize session — creates symlinks, sets up PATH and env
-eval "$(cli-replay run scenario.yaml)"
+eval "$(cli-replay run scenario.yaml)"  # setup + env
+kubectl get pods                         # intercepted
+cli-replay verify scenario.yaml          # check result
+cli-replay clean scenario.yaml           # cleanup
 ```
 
 **Windows (PowerShell):**
 ```powershell
-# Initialize session — creates wrappers, sets up PATH and env
 .\cli-replay.exe run scenario.yaml | Invoke-Expression
-```
-
-### 3. Run your test
-
-```bash
-# This is intercepted by cli-replay
 kubectl get pods
-
-# Output:
-# NAME    READY   STATUS    RESTARTS   AGE
-# web-0   1/1     Running   0          5m
-```
-
-### 4. Verify completion
-
-```bash
-cli-replay verify scenario.yaml
-# cli-replay: scenario "kubectl-demo" complete (1/1 steps)
+.\cli-replay.exe verify scenario.yaml
+.\cli-replay.exe clean scenario.yaml
 ```
 
 ## Scenario YAML Format
@@ -166,7 +185,8 @@ steps:
 - `exit` must be 0-255
 - `stdout` and `stdout_file` are mutually exclusive
 - `stderr` and `stderr_file` are mutually exclusive
-- `calls.min` must be ≥ 0, `calls.max` must be ≥ `min` (when specified)
+- `calls.min` must be ≥ 0, `calls.max` must be ≥ 1 and ≥ `min` (when specified)
+- If only `calls.min` is set and `calls.max` is omitted, `max` defaults to `min`
 - `calls.min: 0` creates an optional step (can be skipped entirely)
 - `deny_env_vars` entries must be non-empty strings (glob patterns via `path.Match`)
 - `session.ttl` must be a valid Go duration (`time.ParseDuration`) and positive
@@ -224,6 +244,78 @@ steps:
 
 ## Commands
 
+### cli-replay validate
+
+Validate scenario files for schema and semantic correctness without executing them:
+
+```bash
+cli-replay validate scenario.yaml
+cli-replay validate a.yaml b.yaml c.yaml
+cli-replay validate --format json scenarios/*.yaml
+```
+
+The `validate` command checks all [validation rules](#validation-rules) — required fields, value ranges, mutual exclusivity, capture forward references, call bounds consistency, and group constraints — plus verifies that `stdout_file`/`stderr_file` references exist on disk.
+
+**No side effects**: `validate` does not create `.cli-replay/` directories, state files, intercept wrappers, or modify any environment state.
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format` | string | `text` | Output format: `text` or `json` |
+
+#### Multi-File Support
+
+Each file is validated independently. A failure in one file does not prevent validation of others:
+
+```bash
+cli-replay validate good.yaml bad.yaml also-good.yaml
+# ✓ good.yaml: valid
+# ✗ bad.yaml:
+#   - meta: name must be non-empty
+#   - step 2: calls: min (5) must be <= max (3)
+# ✓ also-good.yaml: valid
+# Result: 2/3 files valid
+```
+
+#### JSON Output
+
+```bash
+cli-replay validate --format json scenario.yaml
+```
+
+Outputs a JSON array to stdout:
+
+```json
+[
+  {
+    "file": "scenario.yaml",
+    "valid": true,
+    "errors": []
+  }
+]
+```
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All files pass validation |
+| 1 | One or more files have errors |
+
+#### Use in CI / Pre-Commit Hooks
+
+```bash
+# Pre-commit hook
+changed=$(git diff --cached --name-only -- '*.yaml' | grep -E 'scenario|test')
+if [ -n "$changed" ]; then
+  cli-replay validate $changed || exit 1
+fi
+
+# GitHub Actions
+- run: cli-replay validate scenarios/*.yaml
+```
+
 ### cli-replay record
 
 Record a command execution and generate a YAML scenario file:
@@ -272,10 +364,8 @@ cli-replay record \
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success — recording completed and YAML written |
-| 1 | Setup failure (invalid flags, output path not writable) |
-| 2 | User command failed (YAML is still generated) |
-| 3 | YAML generation or validation failed |
+| 0 | Success — recording completed and YAML written (even if the recorded command exited non-zero) |
+| 1 | Failure — setup error, execution error, or YAML generation error |
 
 #### How Recording Works
 
@@ -296,7 +386,6 @@ cli-replay run scenario.yaml
 |------|------|---------|-------------|
 | `--shell` | string | auto-detect | Output format: `powershell`, `bash`, `cmd` |
 | `--allowed-commands` | string | `""` | Comma-separated list of commands allowed to be intercepted |
-| `--max-delay` | string | `5m` | Maximum allowed delay duration (e.g., `5m`, `30s`) |
 | `--dry-run` | bool | `false` | Preview the scenario step sequence without creating intercepts |
 
 #### Security Allowlist
@@ -312,6 +401,8 @@ cli-replay run --allowed-commands kubectl,az scenario.yaml
 ```
 
 If a scenario step references a command not in the allowlist, `cli-replay run` exits with an error before creating any intercepts.
+
+> 📖 See [SECURITY.md](SECURITY.md) for the full threat model, trust boundaries, and security recommendations.
 
 ### cli-replay verify
 
@@ -333,24 +424,17 @@ cli-replay verify scenario.yaml --format json | jq .
 
 # JUnit XML output (for CI dashboards)
 cli-replay verify scenario.yaml --format junit > results.xml
-
-# Default text output (human-readable)
-cli-replay verify scenario.yaml --format text
 ```
+
+Without `--format`, verify produces human-readable text output on stderr.
 
 When call count bounds are used, verify reports per-step invocation counts:
 
 ```
 ✓ Scenario "my-test" completed: 3/3 steps consumed
-  Step 1: kubectl get pods — 4 calls (min: 1, max: 5) ✓
+  Step 1: kubectl get — 4 calls (min: 1, max: 5) ✓
   Step 2: kubectl apply — 1 call (min: 1, max: 1) ✓
-  Step 3: kubectl rollout status — 2 calls (min: 1, max: 3) ✓
-```
-
-Steps inside groups show the group name in the label:
-
-```
-  Step 2: [group:pre-flight] az account show — 1 call (min: 1, max: 2) ✓
+  Step 3: kubectl rollout — 2 calls (min: 1, max: 3) ✓
 ```
 
 ### cli-replay exec
@@ -368,7 +452,7 @@ This is the recommended mode for CI pipelines. No `eval`, no manual cleanup.
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--allowed-commands` | string | `""` | Comma-separated list of commands allowed to be intercepted |
-| `--format` | string | `""` | Output format for verification: `json`, `junit`, or `text` |
+| `--format` | string | `""` | Output format for verification: `json` or `junit` |
 | `--report-file` | string | `""` | Write structured verification output to a file path |
 | `--dry-run` | bool | `false` | Preview the scenario without spawning a child process |
 
@@ -391,7 +475,7 @@ cli-replay exec --format json scenario.yaml -- bash test.sh
 | N | Child process exited with code N (propagated directly) |
 | 126 | Child command found but not executable |
 | 127 | Child command not found |
-| 128+N | Child process killed by signal N (e.g., 143 = SIGTERM) |
+| 128+N | Child process killed by signal N (e.g., 130 = SIGINT) |
 
 #### How It Works
 
@@ -445,7 +529,7 @@ cli-replay clean --ttl 30m --recursive /path/to/projects
 | `--ttl` | string | `""` | Only clean sessions older than this Go duration (e.g., `10m`, `1h`) |
 | `--recursive` | bool | `false` | Walk directory tree for `.cli-replay/` dirs (requires `--ttl`) |
 
-**Safety guard**: `--recursive` requires `--ttl` to prevent accidental deletion of all sessions. Recursive walk skips `.git`, `node_modules`, `vendor`, and `.terraform` directories.
+**Safety guard**: `--recursive` requires `--ttl` to prevent accidental deletion of all sessions. Recursive walk skips `.git`, `node_modules`, `vendor`, `.terraform`, and `__pycache__` directories.
 
 ## Session Isolation
 
@@ -488,7 +572,7 @@ This ensures cleanup happens even if the script is interrupted (Ctrl+C) or termi
 | `CLI_REPLAY_SCENARIO` | Path to scenario file (required in intercept mode) |
 | `CLI_REPLAY_SESSION` | Session ID for isolation (auto-set by `run`, or set manually) |
 | `CLI_REPLAY_TRACE` | Set to "1" to enable trace output (includes denied env var logging) |
-| `CLI_REPLAY_COLOR` | Force color output: `1` to enable, `0` to disable (overrides `NO_COLOR`) |
+| `CLI_REPLAY_COLOR` | Force color output: `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable (overrides `NO_COLOR`) |
 | `NO_COLOR` | Set to any value to disable colored output (see [no-color.org](https://no-color.org)) |
 
 ## Template Variables
@@ -535,9 +619,11 @@ meta:
 **Behavior**:
 - Denied env vars resolve to the `meta.vars` default (or empty string if no default)
 - Patterns use `path.Match` glob syntax (`*` matches any sequence of non-separator characters)
-- Internal variables (`CLI_REPLAY_*`) are always exempt from deny rules
+- Internal variables (`CLI_REPLAY_SESSION`, `CLI_REPLAY_SCENARIO`, `CLI_REPLAY_RECORDING_LOG`, `CLI_REPLAY_SHIM_DIR`, `CLI_REPLAY_TRACE`) are always exempt from deny rules
 - When `CLI_REPLAY_TRACE=1`, denied variables are logged: `cli-replay[trace]: denied env var SECRET_KEY`
 - If no `deny_env_vars` is configured, all env vars pass through (backward compatible)
+
+> 📖 See [SECURITY.md](SECURITY.md) for a complete list of security controls and known limitations.
 
 ## Dynamic Matching
 
@@ -751,8 +837,8 @@ For bulk cleanup across many projects, use [`cli-replay clean --ttl --recursive`
 
 ## How It Works
 
-1. **Symlink Interception**: Create symlinks to cli-replay named after commands you want to fake (e.g., `kubectl`, `az`)
-2. **PATH Manipulation**: Prepend the symlink directory to PATH
+1. **Binary Interception**: Create copies (Windows `.exe`) or symlinks (Unix) of cli-replay named after commands you want to fake (e.g., `kubectl`, `az`)
+2. **PATH Manipulation**: Prepend the intercept directory to PATH
 3. **Command Detection**: When invoked via symlink, cli-replay reads `CLI_REPLAY_SCENARIO`
 4. **Step Matching**: Compares incoming argv against the next expected step
 5. **Response Replay**: Writes stdout/stderr and returns exit code
@@ -760,7 +846,7 @@ For bulk cleanup across many projects, use [`cli-replay clean --ttl --recursive`
 
 ## Limitations
 
-- **Strict ordering** — commands must match in exact sequence; no support for unordered or concurrent steps
+- **Sequential execution** — commands must match in sequence. [Step groups](#step-groups-unordered-matching) allow unordered matching within a group, but fully concurrent steps across groups are not supported
 - **No parallel execution** — state is per-scenario, not per-process. Session isolation (via `CLI_REPLAY_SESSION`) supports parallel *test runs*, but not parallel *steps within* a scenario
 - **Fixed responses only** — no conditional or dynamic response logic based on runtime state
 - **stdin size limit** — piped input is capped at 1 MB during both replay and recording
@@ -804,7 +890,8 @@ golangci-lint run
 | Feature | Unix (macOS/Linux) | Windows 10+ |
 |---------|-------------------|-------------|
 | Record commands | ✅ Bash shims | ✅ .cmd + .ps1 shims |
-| Replay scenarios | ✅ Symlinks | ✅ .cmd wrappers |
+| Replay scenarios | ✅ Symlinks | ✅ .exe binary copies |
+| Process tree cleanup | ✅ SIGTERM to process group | ✅ Job Objects (KILL_ON_JOB_CLOSE) |
 | State persistence | ✅ `.cli-replay/` | ✅ `.cli-replay/` |
 | Build | ✅ `make build` | ✅ `go build` / `build.ps1` |
 | CI | ✅ GitHub Actions | ✅ GitHub Actions |
@@ -849,18 +936,29 @@ $env:PATHEXT  # Should contain .CMD
 
 ### Windows: Signal Handling (Ctrl+C / Process Termination)
 
-On Unix, cli-replay forwards `SIGINT` and `SIGTERM` to child processes during `exec` mode. On Windows, `SIGTERM` is not supported — cli-replay uses `Process.Kill()` instead when Ctrl+C is pressed.
+On Unix, cli-replay forwards `SIGINT` and `SIGTERM` to child processes during `exec` mode. On Windows, cli-replay uses **Windows Job Objects** to manage the entire process tree:
 
-**Known limitations on Windows:**
-- `Process.Kill()` does not propagate to grandchild processes. If your child spawns sub-processes, they may be orphaned after Ctrl+C
-- There is no graceful shutdown option — the child is killed immediately
-- If cleanup fails due to orphaned grandchildren, run `cli-replay clean` manually to remove stale state and intercept directories
+- When `cli-replay exec` starts a child process, it creates a Job Object with `KILL_ON_JOB_CLOSE` and assigns the child to it
+- All descendant processes (grandchildren, etc.) are automatically tracked by the job
+- On Ctrl+C, the entire process tree is terminated — not just the direct child
+- If the parent process is killed, `KILL_ON_JOB_CLOSE` ensures the job cleans up remaining processes
+
+**Fallback behavior**: If Job Object creation fails (restricted environments, containers), cli-replay falls back to `Process.Kill()` with a warning:
+
+```
+cli-replay: warning: job object unavailable, falling back to single-process kill: <error detail>
+```
+
+In fallback mode, grandchild processes may be orphaned. Run `cli-replay clean` manually if needed:
 
 ```powershell
-# Manual cleanup after unexpected termination on Windows
 cli-replay clean scenario.yaml
 ```
 
 ## License
 
 MIT
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security policy, vulnerability reporting process, threat model, and recommendations.

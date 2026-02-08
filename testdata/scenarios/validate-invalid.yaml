@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+# Invalid scenario with multiple errors for cli-replay validate tests:
+#   1. Empty meta.name
+#   2. calls.min > calls.max
+#   3. stdout and stdout_file both set
+#   4. Forward capture reference
+meta:
+  name: ""
+
+steps:
+  - match:
+      argv: ["kubectl", "get", "pods"]
+    respond:
+      exit: 0
+      stdout: "hello"
+      stdout_file: "nonexistent.txt"
+
+  - match:
+      argv: ["kubectl", "apply", "-f", "deploy.yaml"]
+    calls:
+      min: 5
+      max: 3
+    respond:
+      exit: 0
+      stdout: "deployed"
+
+  - match:
+      argv: ["kubectl", "get", "status"]
+    respond:
+      exit: 0
+      stdout: '{{ .capture.future_ref }}'
+
+  - match:
+      argv: ["kubectl", "delete", "pod"]
+    respond:
+      exit: 0
+      stdout: "deleted"
+      capture:
+        future_ref: "some-value"
