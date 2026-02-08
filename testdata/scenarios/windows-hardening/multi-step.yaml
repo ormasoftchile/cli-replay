@@ -1,0 +1,18 @@
+meta:
+  name: win-multi-step
+steps:
+  - match:
+      argv: [myapp, one]
+    respond:
+      exit: 0
+      stdout: "one\n"
+  - match:
+      argv: [myapp, two]
+    respond:
+      exit: 0
+      stdout: "two\n"
+  - match:
+      argv: [myapp, three]
+    respond:
+      exit: 0
+      stdout: "three\n"

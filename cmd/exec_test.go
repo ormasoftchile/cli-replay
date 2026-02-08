@@ -15,6 +15,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// trueCmd returns a command that always exits 0 on the current platform.
+func trueCmd() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "exit", "0"}
+	}
+	return []string{"true"}
+}
+
+// exitCmd returns a command that exits with the given code.
+func exitCmd(code string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "exit", code}
+	}
+	return []string{"sh", "-c", "exit " + code}
+}
+
 // makeExecRoot creates a fresh root + exec command tree for testing,
 // avoiding global state contamination.
 func makeExecRoot() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
@@ -103,10 +119,6 @@ func TestExecCommand_Registration(t *testing.T) {
 }
 
 func TestExecCommand_ArgsLenAtDash(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -121,17 +133,14 @@ func TestExecCommand_ArgsLenAtDash(t *testing.T) {
 
 // T006: Test runExec with valid scenario + successful child
 func TestExecCommand_HappyPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
 
-	// Use 'true' as child command (always exits 0) — scenario won't be
+	// Use a no-op child command (always exits 0) — scenario won't be
 	// fully consumed. We verify the lifecycle runs and cleanup occurs.
-	root.SetArgs([]string{"exec", scenarioPath, "--", "true"})
+	args := append([]string{"exec", scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	err := root.Execute()
 
 	// Verification will fail because 'true' doesn't trigger intercepted commands
@@ -150,10 +159,6 @@ func TestExecCommand_HappyPath(t *testing.T) {
 
 // T007: Test runExec with invalid scenario file
 func TestExecCommand_InvalidScenario(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 
 	root.SetArgs([]string{"exec", "/nonexistent/scenario.yaml", "--", "echo", "hello"})
@@ -167,10 +172,6 @@ func TestExecCommand_InvalidScenario(t *testing.T) {
 
 // T008: Test runExec with missing command after --
 func TestExecCommand_MissingCommandAfterDash(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -183,15 +184,12 @@ func TestExecCommand_MissingCommandAfterDash(t *testing.T) {
 
 // T009: Test exit code propagation
 func TestExecCommand_ExitCodePropagation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
 
-	root.SetArgs([]string{"exec", scenarioPath, "--", "sh", "-c", "exit 42"})
+	args := append([]string{"exec", scenarioPath, "--"}, exitCmd("42")...)
+	root.SetArgs(args)
 	err := root.Execute()
 	require.Error(t, err)
 	assert.Equal(t, 42, ExecExitCode, "should propagate child exit code 42")
@@ -199,16 +197,13 @@ func TestExecCommand_ExitCodePropagation(t *testing.T) {
 
 // T010: Test verification failure with unconsumed steps
 func TestExecCommand_VerificationFailure(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, twoStepScenario)
 
-	// Run 'true' — exits 0 but triggers no scenario steps
-	root.SetArgs([]string{"exec", scenarioPath, "--", "true"})
+	// Run no-op command — exits 0 but triggers no scenario steps
+	args := append([]string{"exec", scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	err := root.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "scenario verification failed")
@@ -253,10 +248,6 @@ func TestExecCommand_IdempotentCleanup(t *testing.T) {
 
 // Test missing scenario path before --
 func TestExecCommand_MissingScenarioPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 
 	root.SetArgs([]string{"exec", "--", "echo", "hello"})
@@ -267,17 +258,14 @@ func TestExecCommand_MissingScenarioPath(t *testing.T) {
 
 // Test with --allowed-commands flag
 func TestExecCommand_AllowedCommandsFlag(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 
 	// Scenario uses 'echo' but we only allow 'kubectl'
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
 
-	root.SetArgs([]string{"exec", "--allowed-commands=kubectl", scenarioPath, "--", "true"})
+	args := append([]string{"exec", "--allowed-commands=kubectl", scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	err := root.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not in the allowed commands list")
@@ -285,10 +273,6 @@ func TestExecCommand_AllowedCommandsFlag(t *testing.T) {
 
 // Test child command not found
 func TestExecCommand_ChildNotFound(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -302,7 +286,7 @@ func TestExecCommand_ChildNotFound(t *testing.T) {
 // Test signal-killed child produces 128+signum exit code
 func TestExecCommand_SignalKilledChild(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
+		t.Skip("Unix-only: SIGTERM/kill not available on Windows")
 	}
 
 	root, _, _ := makeExecRoot()
@@ -318,10 +302,6 @@ func TestExecCommand_SignalKilledChild(t *testing.T) {
 
 // Test cleanup happens even when child fails
 func TestExecCommand_CleanupOnChildFailure(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -330,7 +310,8 @@ func TestExecCommand_CleanupOnChildFailure(t *testing.T) {
 	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
 	beforeDirs, _ := filepath.Glob(filepath.Join(cliReplayDir, "intercept-*"))
 
-	root.SetArgs([]string{"exec", scenarioPath, "--", "sh", "-c", "exit 1"})
+	args := append([]string{"exec", scenarioPath, "--"}, exitCmd("1")...)
+	root.SetArgs(args)
 	_ = root.Execute()
 
 	// Count intercept dirs after — should not have grown
@@ -344,10 +325,6 @@ func TestExecCommand_CleanupOnChildFailure(t *testing.T) {
 
 // Test multiple args before -- is rejected
 func TestExecCommand_MultipleArgsBeforeDash(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -360,10 +337,6 @@ func TestExecCommand_MultipleArgsBeforeDash(t *testing.T) {
 
 // Test that exec properly cleans state files
 func TestExecCommand_StateFileCleanup(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -372,7 +345,8 @@ func TestExecCommand_StateFileCleanup(t *testing.T) {
 	cliReplayDir := filepath.Join(tmpDir, ".cli-replay")
 	beforeStates, _ := filepath.Glob(filepath.Join(cliReplayDir, "cli-replay-*.state"))
 
-	root.SetArgs([]string{"exec", scenarioPath, "--", "true"})
+	args := append([]string{"exec", scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	_ = root.Execute()
 
 	// Count state files after
@@ -384,10 +358,6 @@ func TestExecCommand_StateFileCleanup(t *testing.T) {
 
 // Test with empty scenario (no steps)
 func TestExecCommand_EmptyScenario(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 
@@ -397,7 +367,8 @@ steps: []
 `
 	scenarioPath := createTestScenario(t, tmpDir, emptyScenario)
 
-	root.SetArgs([]string{"exec", scenarioPath, "--", "true"})
+	args := append([]string{"exec", scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	err := root.Execute()
 	require.Error(t, err)
 	// Empty scenario should fail validation
@@ -405,16 +376,13 @@ steps: []
 }
 
 func TestExecCommand_StringContainsAllowedCommand(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
 
 	// 'echo' is in allowed list — should proceed to execution
-	root.SetArgs([]string{"exec", "--allowed-commands=echo", scenarioPath, "--", "true"})
+	args := append([]string{"exec", "--allowed-commands=echo", scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	err := root.Execute()
 	// Should get past allowlist validation (may fail on verification)
 	if err != nil {
@@ -424,16 +392,13 @@ func TestExecCommand_StringContainsAllowedCommand(t *testing.T) {
 
 // T012: --report-file writes structured JSON output to a file
 func TestExecCommand_ReportFileJSON(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
 	reportPath := filepath.Join(tmpDir, "report.json")
 
 	root, _, _ := makeExecRoot()
-	root.SetArgs([]string{"exec", "--format", "json", "--report-file", reportPath, scenarioPath, "--", "echo", "hello"})
+	args := append([]string{"exec", "--format", "json", "--report-file", reportPath, scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	_ = root.Execute() // May fail on verification, but report should be written
 
 	// Verify report file was created
@@ -451,16 +416,13 @@ func TestExecCommand_ReportFileJSON(t *testing.T) {
 
 // T012: --report-file writes structured JUnit output to a file
 func TestExecCommand_ReportFileJUnit(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
 	reportPath := filepath.Join(tmpDir, "report.xml")
 
 	root, _, _ := makeExecRoot()
-	root.SetArgs([]string{"exec", "--format", "junit", "--report-file", reportPath, scenarioPath, "--", "echo", "hello"})
+	args := append([]string{"exec", "--format", "junit", "--report-file", reportPath, scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	_ = root.Execute()
 
 	if _, err := os.Stat(reportPath); err == nil {
@@ -474,16 +436,13 @@ func TestExecCommand_ReportFileJUnit(t *testing.T) {
 
 // T012: no report file when --format is omitted
 func TestExecCommand_NoReportWithoutFormat(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
 	reportPath := filepath.Join(tmpDir, "report.json")
 
 	root, _, _ := makeExecRoot()
-	root.SetArgs([]string{"exec", "--report-file", reportPath, scenarioPath, "--", "echo", "hello"})
+	args := append([]string{"exec", "--report-file", reportPath, scenarioPath, "--"}, trueCmd()...)
+	root.SetArgs(args)
 	_ = root.Execute()
 
 	// With --report-file but without --format, no structured output should be written
@@ -493,10 +452,6 @@ func TestExecCommand_NoReportWithoutFormat(t *testing.T) {
 
 // T012: invalid --format value returns error
 func TestExecCommand_InvalidFormat(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -525,10 +480,6 @@ func TestExecCommand_FormatFlagRegistered(t *testing.T) {
 // T034: Tests for exec --dry-run
 
 func TestExecCommand_DryRun_ValidScenario(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, stdout, _ := makeExecRoot()
 	tmpDir := t.TempDir()
 	scenarioPath := createTestScenario(t, tmpDir, singleStepScenario)
@@ -549,10 +500,6 @@ func TestExecCommand_DryRun_ValidScenario(t *testing.T) {
 }
 
 func TestExecCommand_DryRun_InvalidScenario(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-specific test")
-	}
-
 	root, _, _ := makeExecRoot()
 
 	root.SetArgs([]string{"exec", "--dry-run", "/nonexistent.yaml", "--", "echo"})

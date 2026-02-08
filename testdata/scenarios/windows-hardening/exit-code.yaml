@@ -1,0 +1,8 @@
+meta:
+  name: win-exit-code
+steps:
+  - match:
+      argv: [myapp, hello]
+    respond:
+      exit: 42
+      stdout: "hello\n"

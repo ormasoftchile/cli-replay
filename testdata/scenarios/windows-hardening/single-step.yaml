@@ -1,0 +1,8 @@
+meta:
+  name: win-single-step
+steps:
+  - match:
+      argv: [myapp, hello]
+    respond:
+      exit: 0
+      stdout: "hello\n"
