@@ -57,7 +57,7 @@ runs:
         if [ "$VERSION" = "latest" ]; then
           VERSION=$(curl -fsSL \
             -H "Authorization: token ${GH_TOKEN}" \
-            "https://api.github.com/repos/cli-replay/cli-replay/releases/latest" \
+            "https://api.github.com/repos/ormasoftchile/cli-replay/releases/latest" \
             | grep '"tag_name"' | head -1 | cut -d '"' -f 4)
           if [ -z "$VERSION" ]; then
             echo "::error::Failed to resolve latest version"
@@ -77,7 +77,7 @@ runs:
         ARCHIVE="cli-replay_${VER_NUM}_${GOOS}_${GOARCH}.${EXT}"
 
         # Download
-        URL="https://github.com/cli-replay/cli-replay/releases/download/${VERSION}/${ARCHIVE}"
+        URL="https://github.com/ormasoftchile/cli-replay/releases/download/${VERSION}/${ARCHIVE}"
         echo "Downloading ${URL}"
         curl -fsSL "${URL}" -o "${ARCHIVE}"
 

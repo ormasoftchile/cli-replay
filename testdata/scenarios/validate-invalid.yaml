@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ormasoftchile/cli-replay/main/schema/scenario.schema.json
 # Invalid scenario with multiple errors for cli-replay validate tests:
 #   1. Empty meta.name
 #   2. calls.min > calls.max

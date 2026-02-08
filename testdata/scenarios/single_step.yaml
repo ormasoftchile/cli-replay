@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ormasoftchile/cli-replay/main/schema/scenario.schema.json
 meta:
   name: "single-step-test"
   description: "Test scenario with a single step"
