@@ -226,10 +226,14 @@ func runExec(cmd *cobra.Command, args []string) error {
 	postStartHook, cleanupSignals := setupSignalForwarding(childCmd)
 
 	if err := childCmd.Start(); err != nil {
-		cleanupSignals()
-		// Determine exit code: command not found = 127, not executable = 126
-		ExecExitCode = exitCodeForStartError(err)
-		return fmt.Errorf("failed to start child process: %w", err)
+		// FR-004: If Start() fails and we're on Unix with Setpgid, retry without process group.
+		retryErr := retryWithoutProcessGroup(childCmd)
+		if retryErr != nil {
+			cleanupSignals()
+			// Determine exit code: command not found = 127, not executable = 126
+			ExecExitCode = exitCodeForStartError(err)
+			return fmt.Errorf("failed to start child process: %w", err)
+		}
 	}
 
 	// Platform-specific post-start hook (Windows: assign to job object + resume)

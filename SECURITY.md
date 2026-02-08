@@ -106,6 +106,8 @@ meta:
 | Session TTL | Auto-cleanup | YAML: `meta.session.ttl` (Go duration) |
 | Session isolation | Unique session IDs | Automatic via `CLI_REPLAY_SESSION` |
 | Intercept cleanup | Automatic | Unix: shell trap; `exec` mode: defer; Manual: `cli-replay clean` |
+| Process group cleanup (Unix) | `Setpgid` + group kill | Automatic in `exec` mode; SIGTERM → 100ms → SIGKILL to entire group |
+| Regex safety (ReDoS) | Go RE2 engine | Inherent — no configuration needed |
 
 ## Known Limitations
 
@@ -118,6 +120,22 @@ meta:
 4. **Windows process tree termination**: On Windows versions older than Windows 8 (unsupported), job object assignment may fail, falling back to single-process kill. Grandchild processes may be orphaned.
 
 5. **Recording captures real output**: `cli-replay record` captures real command output verbatim. Sensitive data in command output will appear in the recorded YAML.
+
+6. **SIGKILL cannot be intercepted**: On Unix, `SIGKILL` (signal 9) is handled directly by the kernel and cannot be caught or forwarded by any user-space process, including cli-replay. If cli-replay is killed with `SIGKILL`, the process group cleanup logic cannot execute, and descendant processes may be orphaned. The TTL-based session cleanup (`meta.session.ttl`) mitigates this by removing stale session artifacts on the next `exec` invocation. To avoid orphans in CI, prefer `SIGTERM` (signal 15) which allows cli-replay to perform orderly group shutdown.
+
+## Regex Safety (ReDoS Prevention)
+
+cli-replay uses Go's built-in `regexp` package for pattern matching in `match.argv` fields (`{{ .regex "..." }}`). Go's `regexp` package implements the **RE2 algorithm** (Thompson NFA), which guarantees **linear-time matching** — O(n) in the length of the input string, regardless of pattern complexity.
+
+This means cli-replay is **inherently immune to Regular Expression Denial of Service (ReDoS)** attacks. Pathological patterns like `^(a+)+$` that cause exponential backtracking in PCRE-based engines (Perl, JavaScript, Python `re`, Java) complete in microseconds in Go's RE2 engine.
+
+**Key properties**:
+- No exponential backtracking is possible
+- Matching time is bounded by O(m×n) where m = pattern size, n = input length
+- A benchmark test (`BenchmarkRegexPathological` in `internal/matcher/bench_test.go`) demonstrates safe performance on known-pathological patterns
+- No additional configuration, timeouts, or complexity limits are needed
+
+For more information, see [RE2: A Principled Approach to Regular Expression Matching](https://github.com/google/re2) and [Go regexp package documentation](https://pkg.go.dev/regexp).
 
 ## Recommendations
 
