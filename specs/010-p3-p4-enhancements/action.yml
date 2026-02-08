@@ -1,0 +1,133 @@
+name: 'Setup cli-replay'
+description: 'Install cli-replay and optionally run/validate a scenario in CI workflows'
+branding:
+  icon: 'terminal'
+  color: 'blue'
+
+inputs:
+  scenario:
+    description: 'Path to scenario YAML file'
+    required: true
+  run:
+    description: 'Command to run under interception (passed after -- to cli-replay exec)'
+    required: false
+  version:
+    description: 'cli-replay version to install (e.g., v1.2.3). Default: latest'
+    required: false
+    default: 'latest'
+  format:
+    description: 'Output format for verification report: json or junit'
+    required: false
+  report-file:
+    description: 'Path to write verification report file'
+    required: false
+  validate-only:
+    description: 'Run cli-replay validate instead of exec (true/false)'
+    required: false
+    default: 'false'
+  allowed-commands:
+    description: 'Comma-separated list of commands allowed to be intercepted'
+    required: false
+
+outputs:
+  cli-replay-version:
+    description: 'The installed cli-replay version'
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    # Step 1: Detect platform and install cli-replay
+    - name: Install cli-replay
+      id: install
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Map runner.os → GOOS
+        case "${{ runner.os }}" in
+          Linux)   GOOS="linux" ;;
+          macOS)   GOOS="darwin" ;;
+          Windows) GOOS="windows" ;;
+          *) echo "::error::Unsupported runner OS: ${{ runner.os }}"; exit 1 ;;
+        esac
+
+        # Map runner.arch → GOARCH
+        case "${{ runner.arch }}" in
+          X64)   GOARCH="amd64" ;;
+          ARM64) GOARCH="arm64" ;;
+          *) echo "::error::Unsupported architecture: ${{ runner.arch }}"; exit 1 ;;
+        esac
+
+        # Resolve version
+        VERSION="${{ inputs.version }}"
+        if [ "$VERSION" = "latest" ]; then
+          VERSION=$(curl -sL https://api.github.com/repos/ormasoftchile/cli-replay/releases/latest | grep '"tag_name"' | head -1 | cut -d '"' -f 4)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Failed to resolve latest cli-replay version from GitHub Releases"
+            exit 1
+          fi
+        fi
+
+        # Determine archive extension
+        EXT="tar.gz"
+        [ "$GOOS" = "windows" ] && EXT="zip"
+
+        # Download
+        ARCHIVE="cli-replay-${VERSION}-${GOOS}-${GOARCH}.${EXT}"
+        URL="https://github.com/ormasoftchile/cli-replay/releases/download/${VERSION}/${ARCHIVE}"
+        echo "Downloading cli-replay ${VERSION} for ${GOOS}/${GOARCH}..."
+        curl -sL --fail "${URL}" -o "${ARCHIVE}" || {
+          echo "::error::Failed to download cli-replay from ${URL}"
+          exit 1
+        }
+
+        # Extract
+        mkdir -p "${{ github.action_path }}/bin"
+        if [ "$EXT" = "zip" ]; then
+          unzip -q "${ARCHIVE}" -d "${{ github.action_path }}/bin"
+        else
+          tar xzf "${ARCHIVE}" -C "${{ github.action_path }}/bin"
+        fi
+        rm -f "${ARCHIVE}"
+
+        # Add to PATH for all subsequent steps
+        echo "${{ github.action_path }}/bin" >> "$GITHUB_PATH"
+
+        # Output version
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "Installed cli-replay ${VERSION}"
+
+    # Step 2: Run validate or exec
+    - name: Run cli-replay
+      id: run
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ "${{ inputs.validate-only }}" = "true" ]; then
+          # Validate mode
+          VALIDATE_CMD="cli-replay validate"
+          if [ -n "${{ inputs.format }}" ]; then
+            VALIDATE_CMD="${VALIDATE_CMD} --format ${{ inputs.format }}"
+          fi
+          ${VALIDATE_CMD} ${{ inputs.scenario }}
+
+        elif [ -n "${{ inputs.run }}" ]; then
+          # Exec mode
+          EXEC_CMD="cli-replay exec"
+          if [ -n "${{ inputs.format }}" ]; then
+            EXEC_CMD="${EXEC_CMD} --format ${{ inputs.format }}"
+          fi
+          if [ -n "${{ inputs.report-file }}" ]; then
+            EXEC_CMD="${EXEC_CMD} --report-file ${{ inputs.report-file }}"
+          fi
+          if [ -n "${{ inputs.allowed-commands }}" ]; then
+            EXEC_CMD="${EXEC_CMD} --allowed-commands ${{ inputs.allowed-commands }}"
+          fi
+          ${EXEC_CMD} ${{ inputs.scenario }} -- ${{ inputs.run }}
+
+        else
+          # Setup-only mode: just validate the scenario
+          cli-replay validate ${{ inputs.scenario }}
+        fi

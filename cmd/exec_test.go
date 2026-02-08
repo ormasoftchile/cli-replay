@@ -575,7 +575,7 @@ func TestExecCommand_DryRun_FlagRegistered(t *testing.T) {
 }
 
 // T040: Build-constrained signal forwarding test — verifies that
-// setupSignalForwarding returns a non-nil cleanup function on the
+// setupSignalForwarding returns valid postStart and cleanup functions on the
 // current platform. The implementation is in exec_unix.go and
 // exec_windows.go with build tags, so this test exercises whichever
 // variant is compiled into the current binary.
@@ -589,7 +589,8 @@ func TestSetupSignalForwarding_ReturnsCleanup(t *testing.T) {
 		dummyCmd = exec.Command("echo", "hello")
 	}
 
-	cleanup := setupSignalForwarding(dummyCmd)
+	postStart, cleanup := setupSignalForwarding(dummyCmd)
+	assert.NotNil(t, postStart, "setupSignalForwarding must return a non-nil postStart function")
 	assert.NotNil(t, cleanup, "setupSignalForwarding must return a non-nil cleanup function")
 
 	// Call cleanup — should not panic even though the process was never started

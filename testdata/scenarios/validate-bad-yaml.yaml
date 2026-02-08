@@ -1,0 +1,9 @@
+meta:
+  name: "bad-yaml-test
+  description: this line has unclosed quotes above
+steps:
+  - match:
+    argv: [echo, hello]  # bad indentation - argv should be nested under match
+    respond:
+      exit: 0
+      stdout: "hello"

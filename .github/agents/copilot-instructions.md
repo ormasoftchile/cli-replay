@@ -3,6 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2026-02-07
 
 ## Active Technologies
+- Go 1.21+ + cobra v1.8.0 (CLI), yaml.v3 (scenario parsing), testify v1.8.4 (testing), golang.org/x/sys v0.19.0 (Windows job objects), golang.org/x/term v0.18.0 (010-p3-p4-enhancements)
+- Go 1.21+ + cobra (CLI), yaml.v3 (scenario parsing), testify (testing), text/template (rendering), golang.org/x/term (009-p1-p2-enhancements)
 - Go 1.21 + cobra v1.8.0, yaml.v3, testify v1.8.4 (005-p0-critical-enhancements)
 - JSON state files in `os.TempDir()` (SHA256-hashed filenames) (005-p0-critical-enhancements)
 - Go 1.21 + cobra v1.8.0 (CLI framework), yaml.v3 (scenario loading), testify v1.8.4 (testing), golang.org/x/term v0.18.0 (006-p1-cicd-enhancements)
@@ -29,9 +31,9 @@ tests/
 : Follow standard conventions
 
 ## Recent Changes
+- 010-p3-p4-enhancements: Added golang.org/x/sys/windows (job objects), validate command, GitHub Action, SECURITY.md, cookbook examples, BENCHMARKS.md
+- 009-p1-p2-enhancements: Added Go 1.21+ + cobra (CLI), yaml.v3 (scenario parsing), testify (testing), text/template (rendering), golang.org/x/term
 - 007-p2-quality-of-life: Added Go 1.21+ (module: `github.com/cli-replay/cli-replay`) + cobra v1.8.0, gopkg.in/yaml.v3 v3.0.1, testify v1.8.4, golang.org/x/term v0.18.0
-- 006-p1-cicd-enhancements: Added Go 1.21 + cobra v1.8.0 (CLI framework), yaml.v3 (scenario loading), testify v1.8.4 (testing), golang.org/x/term v0.18.0
-- 005-p0-critical-enhancements: Added Go 1.21 + cobra v1.8.0, yaml.v3, testify v1.8.4
 
 
 <!-- MANUAL ADDITIONS START -->

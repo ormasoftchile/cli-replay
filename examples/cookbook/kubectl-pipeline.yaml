@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cli-replay/cli-replay/main/schema/scenario.schema.json
+
+# Kubectl Pipeline — apply / rollout / get / logs
+#
+# Demonstrates:
+#   - Step groups (unordered) for non-deterministic polling loops
+#   - calls.min / calls.max for repeated commands (e.g., rollout status polling)
+#   - Captures and dynamic template references
+#   - Multi-line JSON and plain text output
+#   - Security allowlist
+#
+# Usage:
+#   cli-replay validate examples/cookbook/kubectl-pipeline.yaml
+#   cli-replay exec examples/cookbook/kubectl-pipeline.yaml -- bash examples/cookbook/kubectl-test.sh
+
+meta:
+  name: "kubectl-pipeline"
+  description: "Kubectl deploy / rollout / get / logs with step groups and polling"
+  vars:
+    namespace: "default"
+    deployment: "myapp"
+    image: "myapp:v2.1.0"
+  security:
+    allowed_commands:
+      - kubectl
+
+steps:
+  # Step 1: Apply the manifest
+  - match:
+      argv: ["kubectl", "apply", "-f", "k8s/deployment.yaml", "-n", "{{ .namespace }}"]
+    respond:
+      exit: 0
+      stdout: |
+        deployment.apps/{{ .deployment }} configured
+        service/{{ .deployment }}-svc unchanged
+
+  # Step 2: Set the new container image
+  - match:
+      argv: ["kubectl", "set", "image", "deployment/{{ .deployment }}", "{{ .deployment }}={{ .image }}", "-n", "{{ .namespace }}"]
+    respond:
+      exit: 0
+      stdout: |
+        deployment.apps/{{ .deployment }} image updated
+
+  # Step 3: Poll rollout status (may be called 1-3 times)
+  - match:
+      argv: ["kubectl", "rollout", "status", "deployment/{{ .deployment }}", "-n", "{{ .namespace }}"]
+    calls:
+      min: 1
+      max: 3
+    respond:
+      exit: 0
+      stdout: |
+        deployment "{{ .deployment }}" successfully rolled out
+
+  # Step 4 — unordered group: Post-deploy checks (get pods / describe / logs)
+  #   These can be called in any order by the script.
+  - group:
+      mode: unordered
+      name: post-deploy-checks
+      steps:
+      - match:
+          argv: ["kubectl", "get", "pods", "-l", "app={{ .deployment }}", "-n", "{{ .namespace }}", "-o", "json"]
+        respond:
+          exit: 0
+          stdout: |
+            {
+              "apiVersion": "v1",
+              "kind": "PodList",
+              "items": [
+                {
+                  "metadata": { "name": "{{ .deployment }}-7d4b8c6f5-abc12", "namespace": "{{ .namespace }}" },
+                  "status": { "phase": "Running", "conditions": [{ "type": "Ready", "status": "True" }] }
+                },
+                {
+                  "metadata": { "name": "{{ .deployment }}-7d4b8c6f5-xyz34", "namespace": "{{ .namespace }}" },
+                  "status": { "phase": "Running", "conditions": [{ "type": "Ready", "status": "True" }] }
+                }
+              ]
+            }
+          capture:
+            pod_name: "{{ .deployment }}-7d4b8c6f5-abc12"
+
+      - match:
+          argv: ["kubectl", "logs", "{{ .deployment }}-7d4b8c6f5-abc12", "-n", "{{ .namespace }}", "--tail=20"]
+        respond:
+          exit: 0
+          stdout: |
+            2024-01-15T10:30:00Z INFO  server listening on :8080
+            2024-01-15T10:30:01Z INFO  health check passed
+            2024-01-15T10:30:02Z INFO  ready to accept connections
+
+      - match:
+          argv: ["kubectl", "describe", "deployment", "{{ .deployment }}", "-n", "{{ .namespace }}"]
+        respond:
+          exit: 0
+          stdout: |
+            Name:                   {{ .deployment }}
+            Namespace:              {{ .namespace }}
+            Selector:               app={{ .deployment }}
+            Replicas:               2 desired | 2 updated | 2 available | 0 unavailable
+            StrategyType:           RollingUpdate
+            Conditions:
+              Type           Status  Reason
+              ----           ------  ------
+              Available      True    MinimumReplicasAvailable
+              Progressing    True    NewReplicaSetAvailable

@@ -1,0 +1,139 @@
+# Test workflow for cli-replay-action
+# This runs in the ormasoftchile/cli-replay-action repository
+
+name: Test Action
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-install:
+    name: Test Install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create test scenario
+        shell: bash
+        run: |
+          cat > test-scenario.yaml << 'EOF'
+          meta:
+            name: "action-test"
+          steps:
+            - match:
+                argv: ["echo", "hello"]
+              respond:
+                exit: 0
+                stdout: "hello\n"
+          EOF
+
+      - name: Test validate-only mode
+        uses: ./
+        with:
+          scenario: test-scenario.yaml
+          validate-only: 'true'
+
+      - name: Verify cli-replay is on PATH
+        shell: bash
+        run: |
+          cli-replay --version
+          echo "cli-replay is available on PATH"
+
+  test-exec:
+    name: Test Exec (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create test scenario and script
+        shell: bash
+        run: |
+          cat > test-scenario.yaml << 'EOF'
+          meta:
+            name: "exec-test"
+            security:
+              allowed_commands: ["echo"]
+          steps:
+            - match:
+                argv: ["echo", "hello"]
+              respond:
+                exit: 0
+                stdout: "hello\n"
+          EOF
+
+          cat > test.sh << 'EOF'
+          #!/bin/bash
+          echo hello
+          EOF
+          chmod +x test.sh
+
+      - name: Test exec mode
+        uses: ./
+        with:
+          scenario: test-scenario.yaml
+          run: bash test.sh
+          allowed-commands: echo
+
+  test-validate:
+    name: Test Validate Mode
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create valid scenario
+        shell: bash
+        run: |
+          cat > valid.yaml << 'EOF'
+          meta:
+            name: "valid-test"
+          steps:
+            - match:
+                argv: ["echo", "ok"]
+              respond:
+                exit: 0
+                stdout: "ok\n"
+          EOF
+
+      - name: Validate scenario
+        uses: ./
+        with:
+          scenario: valid.yaml
+          validate-only: 'true'
+
+  test-pinned-version:
+    name: Test Pinned Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create test scenario
+        shell: bash
+        run: |
+          cat > scenario.yaml << 'EOF'
+          meta:
+            name: "version-test"
+          steps:
+            - match:
+                argv: ["echo", "test"]
+              respond:
+                exit: 0
+                stdout: "test\n"
+          EOF
+
+      # Note: Update this version when releases are published
+      # - name: Install pinned version
+      #   uses: ./
+      #   with:
+      #     scenario: scenario.yaml
+      #     validate-only: 'true'
+      #     version: v1.0.0
