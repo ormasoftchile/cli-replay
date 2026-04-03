@@ -601,3 +601,43 @@ Full analysis written to `.squad/decisions/inbox/gene-dream-feasibility.md`.
 - clint-dream-api-design.md → decisions.md (API contract, package boundaries, stability rules, ReplayEngine design)
 - gene-dream-feasibility.md → decisions.md (extraction roadmap, dependency graph, phased implementation plan)
 - robert-dream-consumer-experience.md → decisions.md (gert integration patterns, error UX, CI workflows, progressive adoption)
+
+### 2026-04-03 — Package Promotion: Phase 1 (scenario, matcher, verify)
+
+Promoted three packages from `internal/` to `pkg/`:
+
+1. **`pkg/scenario`** — Moved as-is (zero internal deps). Contains model types (Scenario, Step, StepElement, StepGroup, Meta, etc.) and YAML loader. No changes to exports needed — all types were already capitalized.
+
+2. **`pkg/matcher`** — Moved as-is (zero internal deps). Contains ArgvMatch, ElementMatchDetail, MatchDetail. Pure stdlib dependency.
+
+3. **`pkg/verify`** — Moved with import update. Still depends on `internal/runner` (for `runner.State` and `runner.NewState`). Updated its `internal/scenario` import to `pkg/scenario`. This cross-boundary dependency is expected — it will resolve when runner is decomposed into `pkg/replay` (Charles's work).
+
+**Import updates across 22 files:** All consumers in `cmd/`, `internal/runner/`, `internal/recorder/` updated to use `pkg/` import paths.
+
+**Observations:**
+- The verify package is not fully "leaf" — it depends on `internal/runner.State`. This is fine for now but means external consumers can't import `pkg/verify` without also having access to `internal/runner`. This will resolve when the ReplayEngine extraction promotes State.
+- All tests pass, build compiles cleanly.
+- `internal/` still contains: `envfilter`, `platform`, `recorder`, `runner`, `template`.
+
+### 2026-04-03  Orchestration Checkpoint: Package Promotion Complete
+
+**Status:** COMPLETED  Team synchronized on Phase 1 delivery.
+
+**What was delivered:**
+1. **Gene (Core Dev):** Promoted scenario, matcher, erify from internal/ to pkg/. Updated 22 import paths. Build clean, all tests pass.
+2. **Charles (Systems Dev):** Extracted ReplayEngine to pkg/replay/ (~500 lines code + ~500 lines tests). Refactored internal/runner to use it. All tests green.
+3. **Michael (Tester):** Wrote 72 new test functions across 4 files covering pkg/ public API surface. All passing.
+
+**Documentation:**
+- 3 orchestration logs written (.squad/orchestration-log/)
+- Session log created (.squad/log/)
+- Decision inbox processed: 3 new decisions merged into .squad/decisions.md
+- History updated across team members
+
+**Quality metrics:**
+- Build:  Clean
+- Tests:  All passing (72 new tests from Michael)
+- Import consistency:  100%
+- API coverage:  Complete
+
+**Next phase:** Await decision consolidation and gert integration planning.

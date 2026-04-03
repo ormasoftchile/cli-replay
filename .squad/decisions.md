@@ -247,6 +247,65 @@ type CommandExecutor interface {
 
 ---
 
+### 2026-04-03T17:58: Integration Strategy Decisions
+
+**By:** Cristián (via Copilot)
+
+1. Start with pkg/ promotion in cli-replay — promote scenario, matcher, verify, replay, recording
+2. Gert adapter lives in gert's repo (keeps cli-replay consumer-agnostic)
+3. Use cli-replay's YAML format directly as canonical, with a one-time converter for existing gert replay files
+
+**Status:** Foundation decisions that gate all implementation work
+
+---
+
+### ReplayEngine Extraction to `pkg/replay/`
+
+**Author:** Charles (Systems Dev)  
+**Date:** 2026-04-03  
+**Status:** Implemented
+
+**Decision:** Extract pure matching/replay logic into `pkg/replay.Engine` — a standalone, in-memory, thread-safe type with zero file I/O and zero CLI coupling. Refactor `internal/runner.ExecuteReplay()` to be a thin orchestrator.
+
+**Key Design Choices:**
+1. **Concrete type, not interface** — `replay.Engine` is a struct. Consumers can wrap in their own interface if needed.
+2. **Functional options pattern** — `replay.New(scenario, opts...)` with options: `WithVars`, `WithEnvLookup`, `WithDenyEnvPatterns`, `WithFileReader`, `WithMatchFunc`, `WithInitialState`.
+3. **Self-contained rendering** — Engine includes its own Go `text/template` renderer to prevent `os.Getenv()` from leaking into public API.
+4. **StateSnapshot for persistence bridging** — `Snapshot()`/`WithInitialState()` enable callers to serialize/deserialize state across process boundaries.
+5. **stdin handled at caller level** — `MatchWithStdin()` exists but primary `Match()` path doesn't touch stdin (belongs to caller).
+
+**Consequences:**
+- External consumers (gert) can now import and drive replay programmatically
+- `internal/runner` is now a thin CLI wrapper (~60% less matching logic)
+- Two small code duplications: `renderWithCaptures` and `globMatch` exist in both `pkg/replay` and `internal/`
+- All existing `internal/runner` test files continue to pass unchanged
+
+**Files Created:** `pkg/replay/engine.go`, `state.go`, `snapshot.go`, `result.go`, `errors.go`, `options.go`, `engine_test.go`  
+**Files Modified:** `internal/runner/replay.go`
+
+---
+
+### Integration Test Location
+
+**Author:** Michael (Tester)  
+**Date:** 2026-04-03  
+**Status:** Implemented
+
+**Problem:** Import cycle when writing integration tests:
+- `pkg/replay` → (engine code)
+- `internal/runner` → imports `pkg/replay`  
+- `pkg/verify` → imports `internal/runner`
+- Placing integration tests in `pkg/replay/` that import `internal/runner` + `pkg/verify` creates a cycle
+
+**Decision:** Integration tests that cross package boundaries are placed in `tests/integration/` as standalone `integration_test` package. This avoids all import cycles and gives tests a true consumer perspective.
+
+**Consequences:**
+- `tests/integration/` is the canonical location for cross-package public API tests
+- Package-specific unit tests remain in their own `pkg/*/publicapi_test.go` files
+- Future ReplayEngine API tests follow this pattern once `pkg/replay/` stabilizes
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus

@@ -115,3 +115,74 @@ steps:
 - `testdata/recordings/` — JSONL fixtures
 - `testdata/scenarios/` — YAML scenario fixtures
 - `testdata/fixtures/` — raw output fixtures
+
+### 2026-04-03 — ReplayEngine Extraction (`pkg/replay/`)
+
+#### What Was Done
+Extracted the core matching/replay logic from `internal/runner/ExecuteReplay()` into a standalone, public `pkg/replay.Engine` type. This is the "Dream API" Pattern B enablement — gert (or any external Go consumer) can now import `pkg/replay` and drive replay programmatically without any CLI coupling or file I/O.
+
+#### Key Design Decisions
+
+1. **Engine is a concrete type, not an interface.** Thread-safe via `sync.Mutex`. Holds loaded scenario, flat steps, group ranges, and in-memory state.
+2. **Zero file I/O, zero CLI coupling.** All external concerns (file reading, env lookup, state persistence) are injected via functional `Option` callbacks.
+3. **`Match(ctx, name, args) → (*Result, error)`** is the primary API. Returns rendered stdout/stderr/exitCode and accumulated captures.
+4. **`MatchWithStdin`** variant exists for stdin-aware matching (separated because the standard gert integration path doesn't need it).
+5. **`StateSnapshot`** type + `WithInitialState()`/`Snapshot()` enable callers to persist engine state across process boundaries. The runner uses this to bridge file-based state ↔ engine state.
+6. **Template rendering is self-contained** — `pkg/replay` includes its own `renderWithCaptures()` using Go `text/template` directly, rather than depending on `internal/template`. This avoids pulling `internal/template`'s `os.Getenv()` dependency into the public package.
+7. **`isDenied()`/`globMatch()`** are self-contained in `pkg/replay` to avoid depending on `internal/envfilter`.
+
+#### Refactoring: `internal/runner` → Thin Wrapper
+`ExecuteReplay()` now creates a `replay.Engine` per invocation, seeds it with persisted file state via `WithInitialState()`, calls `engine.Match()`, syncs the snapshot back to file state, and writes output to io.Writer. It retains:
+- Scenario file loading
+- TTL cleanup
+- State file read/write (atomic)
+- stdin reading from `os.Stdin`
+- Trace output
+- Error type conversion (engine errors → runner errors for CLI formatting)
+
+#### File Layout
+- `pkg/replay/engine.go` — Engine type, Match/MatchWithStdin, rendering, helpers
+- `pkg/replay/state.go` — In-memory state tracking (no persistence)
+- `pkg/replay/snapshot.go` — StateSnapshot for import/export
+- `pkg/replay/result.go` — Result type
+- `pkg/replay/errors.go` — MismatchError, GroupMismatchError, StdinMismatchError, ScenarioCompleteError
+- `pkg/replay/options.go` — Option funcs: WithVars, WithEnvLookup, WithDenyEnvPatterns, WithFileReader, WithMatchFunc, WithInitialState
+- `pkg/replay/engine_test.go` — 22 tests covering all paths
+
+#### Gotchas
+- The engine's `renderWithCaptures` duplicates `internal/template.RenderWithCaptures` intentionally to maintain zero-internal-dependency guarantee.
+- `isDenied`/`globMatch` duplicate `internal/envfilter.IsDenied` for the same reason.
+- `ReplayResponseWithTemplate` still exists in `internal/runner` for backward compat with tests that call it directly, but `ExecuteReplay` no longer uses it (the engine renders internally).
+
+
+### 2026-04-03  Orchestration Checkpoint: ReplayEngine Extraction Complete
+
+**Status:** COMPLETED  ReplayEngine extraction and runner refactoring finished.
+
+**What was delivered:**
+1. **ReplayEngine extraction:** Pure matching/replay logic extracted to pkg/replay.Engine (~500 lines production code + ~500 lines tests)
+   - Standalone, in-memory, thread-safe type
+   - Zero file I/O, zero CLI coupling
+   - Functional options pattern with WithVars, WithEnvLookup, WithDenyEnvPatterns, WithFileReader, WithMatchFunc, WithInitialState
+   - Self-contained template rendering (no internal/template dependency)
+   - StateSnapshot for process boundary serialization
+
+2. **internal/runner refactoring:** Now a thin CLI wrapper delegating to engine
+   - Scenario file loading retained
+   - State file I/O (atomic) retained
+   - stdin reading retained
+   - Trace output + error conversion retained
+   - Matching logic  engine
+
+3. **Test status:** All existing internal/runner tests pass unchanged. 22 new pkg/replay tests added by Michael.
+
+**Architecture note:** Two small code duplications accepted:
+- enderWithCaptures exists in both pkg/replay and internal/ (renders independently)
+- globMatch/isDenied exist in both (avoids pulling internal/envfilter into public API)
+
+**Quality metrics:**
+- Build:  Clean
+- Tests:  All green (no regression from refactoring)
+- API stability:  Concrete type, not interface
+
+**Next phase:** Await gert integration planning and library API stabilization decisions.
