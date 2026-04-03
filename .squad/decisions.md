@@ -306,6 +306,66 @@ type CommandExecutor interface {
 
 ---
 
+### gert Adapter Implementation in cli-replay
+
+**Author:** Robert (Integration Architect)  
+**Date:** 2026-04-03 (Extended 18:16)  
+**Status:** Implemented
+
+**Context:** The cli-replay pkg/ promotion is complete. `pkg/scenario`, `pkg/matcher`, `pkg/replay`, and `pkg/verify` are now public Go packages. Decision made that gert adapter lives in gert's repository to keep cli-replay consumer-agnostic.
+
+**Decision:** Built `pkg/providers/clireplay/` in gert with two CommandExecutor implementations:
+
+1. **ReplayExecutor** — thin wrapper around `replay.Engine.Match()`, converting types
+   - Implements `providers.CommandExecutor`
+   - Exposes: `Remaining()`, `Captures()`, `StepCounts()`, `Reset()`, `Snapshot()`
+   - ~80 LOC
+
+2. **RecordingExecutor** — decorator pattern capturing commands for later Save() as cli-replay YAML
+   - Captures all command/response pairs
+   - Thread-safe via mutex
+   - ~130 LOC
+
+Wired `--mode clireplay` into `gert exec` alongside existing modes (real, dry-run, replay).
+
+**Rationale:**
+- Keeps cli-replay consumer-agnostic (no gert types leak in)
+- Adapter is ~210 LOC total — thin enough to maintain, rich enough to be useful
+- Uses cli-replay's YAML format directly — no format bridging needed
+- RecordingExecutor enables "record in dev, replay in CI" workflow
+- Local `replace` directive in go.mod until module is published
+
+**Consequences:**
+- Gert now depends on `github.com/cli-replay/cli-replay` (via local replace)
+- Users can run `gert exec --mode clireplay --scenario path/to/scenario.yaml`
+- Future work: HybridExecutor (fallback to real for unmatched), evidence collector adapter
+- Need to publish cli-replay module or maintain workspace-level replace directive
+
+**Field Mapping:**
+- `replay.Result.Stdout` (string) → `providers.CommandResult.Stdout` ([]byte)
+- `replay.Result.Stderr` (string) → `providers.CommandResult.Stderr` ([]byte)
+- `replay.Result.ExitCode` (int) → `providers.CommandResult.ExitCode` (int)
+- Duration tracked by adapter (time.Since around Match call)
+
+**Test Coverage:**
+- 45 test functions (78 total with subtests) across 3 test files
+- All match modes: literal, wildcard, regex, unordered
+- Call budget enforcement, capture chains, template rendering
+- Critical: record→save→load→replay cycle validated
+- Concurrency tested (50+ goroutines)
+- 100% pass rate (78/78 tests)
+
+**Key Files Changed (gert repo):**
+- `pkg/providers/clireplay/replay_executor.go` (new)
+- `pkg/providers/clireplay/recording_executor.go` (new)
+- `pkg/providers/clireplay/options.go` (new)
+- `pkg/providers/clireplay/clireplay_test.go` (new, 12 tests)
+- `pkg/providers/clireplay/testdata/` (new, 8 YAML fixtures)
+- `cmd/gert/main.go` (added clireplay mode)
+- `go.mod` (added dependency + replace)
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus

@@ -97,3 +97,25 @@
 **Decision captured:** Integration test location decision documented in .squad/decisions.md
 
 **Next phase:** Await verification from gert integration team on API stability and consumer patterns.
+
+### 2026-04-03 — gert ↔ cli-replay Integration Adapter Tests
+
+- **Context:** Robert built `ReplayExecutor` and `RecordingExecutor` adapters in `gert/pkg/providers/clireplay/` that bridge gert's `CommandExecutor` interface to cli-replay's `pkg/replay.Engine`. Wrote comprehensive test suite to validate the integration surface.
+- **New test files:** 3 files, ~45 new test functions (78 total with subtests)
+  - `replay_executor_test.go` — Tests: single step, multi-step ordered, out-of-order rejection, wildcard matching, regex matching, regex no-match, unordered group (reverse order), group mismatch, call bounds (budget exhaustion + soft advance), error/non-zero exit, capture chain with template rendering, scenario exhaustion, concurrent access (50 goroutines), reset, snapshot + resume, WithVars option passthrough, env parameter handling
+  - `recording_executor_test.go` — Tests: stdout/stderr/exit code capture, multi-command ordering, empty output, large output (100KB), special characters (unicode/CRLF/JSON/tabs), concurrent recording (30 goroutines), save + reload YAML, save error paths, path option, result delegation, env passthrough
+  - `integration_test.go` — Tests: full record→save→load→replay round-trip, round-trip with errors, YAML format validation (Validate() call), kubectl/Azure CLI/Docker workflow round-trips, testdata fixture loading (7 fixtures), unordered group fixture, programmatic scenario construction, file-based full consumption
+- **Test fixtures created:** 8 YAML scenario files in `gert/pkg/providers/clireplay/testdata/`
+  - `single_step.yaml`, `multi_step.yaml`, `wildcard_match.yaml`, `regex_match.yaml`, `unordered_group.yaml`, `call_bounds.yaml`, `capture_chain.yaml`, `error_step.yaml`
+- **Key test coverage:**
+  - All match modes: literal, wildcard (`{{ .any }}`), regex (`{{ .regex "..." }}`)
+  - Ordered + unordered matching
+  - Call budget enforcement + soft advance
+  - Capture chain with template rendering
+  - Thread safety (both adapters)
+  - Record → save → load → replay cycle (THE dream test)
+  - Edge cases: empty output, large output, special chars, CRLF
+- **All 78 tests pass:** `go test ./pkg/providers/clireplay/... -count=1` — OK
+- **Existing tests unaffected:** `go test ./pkg/providers/... -count=1` — all pass
+- **Race detector:** Not available (no GCC on Windows), but concurrent tests exercise thread safety manually
+- **Key finding:** Robert's adapter code is clean and well-structured. The `fakeExecutor` in his `clireplay_test.go` is a simple single-result double; my `multiFakeExecutor` adds multi-result sequencing for complex workflows.
