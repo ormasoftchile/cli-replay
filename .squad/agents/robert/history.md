@@ -382,3 +382,34 @@ External Go modules **cannot import** any of these. Only `cmd` is importable (ex
 - env parameter from CommandExecutor is not forwarded to replay engine (replay doesn't need env for matching — only for template rendering via `WithEnvLookup`)
 - stdin matching (gert's CommandExecutor interface doesn't pass stdin)
 - Evidence collection (separate interface, separate adapter if needed)
+
+### 2026-04-03  `gert run` Command: CLI-Replay Integration Wired to User-Facing Flags
+
+**Deliverable:** New `gert run` subcommand in `cmd/gert/run.go`  a user-friendly execution command with built-in cli-replay `--record` and `--replay` flags.
+
+**What was built:**
+
+1. **`gert run` command** (`cmd/gert/run.go`, ~220 LOC) — a new cobra subcommand alongside `gert exec`. While `exec` is the kitchen-sink command with `--mode` for all executor types, `run` provides a streamlined UX for the cli-replay workflow:
+   - `gert run my-runbook.yaml` -> normal real execution
+   - `gert run --record my-runbook.yaml` -> wraps RealExecutor with RecordingExecutor
+   - `gert run --replay captures.yaml my-runbook.yaml` -> loads scenario, uses ReplayExecutor
+   - `gert run --record --record-output captures.yaml my-runbook.yaml` -> records to explicit path
+
+2. **Flags:**
+   - `--record` (bool)  enables recording mode
+   - `--replay <path>` (string)  path to cli-replay scenario YAML for replay
+   - `--record-output <path>` (string)  explicit output path (default: `.cli-replay/{runbook-name}.yaml`)
+   - `--var`, `--as`, `--non-interactive`  same as `gert exec` for compatibility
+
+3. **UX polish:**
+   - Mutual exclusion: `--record` + `--replay` -> clear error message
+   - On record completion: `Recorded {N} commands to {path}`
+   - On replay start: `Replaying from {path} ({N} steps)`
+   - Default recording path: `.cli-replay/{runbook-name}.yaml` (auto-creates directory)
+
+4. **Architecture decisions:**
+   - Separate `run` command (not flags on `exec`) to avoid naming conflict with exec's existing `--record` flag (which exports gert's own scenario format to a directory)
+   - Self-contained `init()` in `run.go` for clean separation
+   - No changes to `main.go` required  cobra's multi-init pattern handles registration
+
+**Verified:** `go build ./...` passes. Help text renders correctly. Mutual exclusion error works.
