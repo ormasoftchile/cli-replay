@@ -421,3 +421,55 @@ Unlike cli-replay (`internal/`), gert uses `pkg/` — all packages are importabl
 **Pattern B (transparent PATH interception)** requires zero changes to either codebase and covers the primary use case: intercepting CLI tool invocations during runbook execution.
 
 Pattern A is the strategic endgame for deep integration but requires cli-replay to export its matching engine to `pkg/`.
+
+### 2026-04-03 — "The Dream" Public API Design
+
+#### What was designed
+
+Produced the complete `pkg/` promotion blueprint for cli-replay → gert library integration. Filed as `clint-dream-api-design.md` in decisions/inbox.
+
+#### Key architectural decisions
+
+1. **Five packages promoted to `pkg/`:** `scenario` (types+loader), `matcher` (argv matching), `replay` (new in-memory ReplayEngine), `verify` (structured results), `recording` (data accumulator + converters). Three packages stay internal: `runner` (file-based state), `platform` (OS shims), `template`/`envfilter` (implementation details).
+
+2. **ReplayEngine is the crown jewel** — a concrete struct (not interface) that holds a loaded scenario + in-memory match state + mutex for thread safety. Method: `Execute(ctx, command, args) → ReplayResult`. No file I/O, no stdin reading, no PATH manipulation. This is the clean extraction of `internal/runner.ExecuteReplay()`'s matching logic without its CLI plumbing.
+
+3. **Bridge types live in gert, not cli-replay.** cli-replay exports the engine; gert writes the 20-line adapter (`CLIReplayExecutor`) that implements `providers.CommandExecutor`. This keeps cli-replay ignorant of gert's interfaces.
+
+4. **Recording is a data accumulator** — `Recorder` struct with `Record(RecordedCommand)` and `ToScenario()`. Thread-safe. No shim generation, no session lifecycle. gert's `RecordingExecutor` wraps its real executor and feeds commands to the recorder.
+
+5. **cli-replay's YAML is the canonical interchange format.** gert's replay format is a strict subset. A converter (`FromGertCommand`) maps gert's flat format to cli-replay steps. No need for cli-replay to understand gert's format.
+
+6. **Migration is purely additive.** `pkg/` types are new. `internal/` types rewire to delegate. `cmd/` code never breaks. Phase 0 extracts logic (still internal) → Phase 1 creates `pkg/` → Phase 2 rewires internals → Phase 3 releases → Phase 4 stabilizes at v1.0.0.
+
+#### Stability contract
+
+v0.x: API may change between minor versions. v1.0+: standard Go compatibility promise. No interface methods added without major bump. Struct fields may be added (zero-value safe). Deprecation with one major version grace period.
+
+---
+
+### 2026-04-03T17:01 — Scribe Team Sync & Decision Consolidation
+
+**Team produced:**
+1. **Clint:** Dream API contract & pkg/ promotion design (21.3 KB artifact)
+2. **Gene:** internal/ → pkg/ feasibility & refactoring plan (27.2 KB artifact)
+3. **Robert:** Dream consumer experience design (40.3 KB artifact)
+
+**Scribe actions completed:**
+- 3 orchestration logs (one per agent) filed
+- 1 session log filed documenting parallel design sprint
+- Decision inbox merged into .squad/decisions.md (consolidated 3 large artifacts into 3 decision entries)
+- Inbox files deleted post-merge
+- Team updates appended to agent history files
+- All metadata committed to git
+
+**Team alignment achieved:**
+- All three agents aligned on phased approach to pkg/ promotion
+- Consumer requirements (Robert) drive API design (Clint)
+- Technical feasibility (Gene) informs promotion strategy (Clint)
+- Reference implementations (Robert) validate API patterns (Clint)
+
+**Key deliverables archived:**
+- clint-dream-api-design.md → decisions.md (API contract, package boundaries, stability rules, ReplayEngine design)
+- gene-dream-feasibility.md → decisions.md (extraction roadmap, dependency graph, phased implementation plan)
+- robert-dream-consumer-experience.md → decisions.md (gert integration patterns, error UX, CI workflows, progressive adoption)

@@ -522,3 +522,82 @@ cli-replay's current recorder uses JSONL append (file-level atomicity) which is 
 gert's `CommandExecutor` interface is a perfect seam for cli-replay. The interface is minimal (one method), well-defined (context + argv + env → result), and already used as a dependency injection point. gert's existing replay mode proves the architecture supports executor swapping. Adding cli-replay as a recording/playback layer is a natural extension of gert's existing design.
 
 The fact that `tools.Manager.executeStdio()` routes through the same `CommandExecutor` means tool calls get instrumented for free — no special handling needed.
+
+### 2026-04-03 — Package Promotion Feasibility ("The Dream")
+
+#### Key Findings
+
+Conducted a full audit of all 8 internal packages for promotion to `pkg/` to enable gert library integration. Findings:
+
+**Promote (4 packages):**
+1. `internal/scenario` → `pkg/scenario` — Pure data model + YAML loader. Zero internal deps. Cleanest candidate. **Small effort.**
+2. `internal/matcher` → `pkg/matcher` — Pure argv matching. Zero internal deps. Born ready. **Small effort.**
+3. `internal/envfilter` → `pkg/envfilter` — Glob-based env filtering. Zero internal deps. **Small effort.**
+4. `internal/runner` → `pkg/replay` (EXTRACTED, not moved) — Requires decomposing the 200-line `ExecuteReplay()` into a clean `Engine` struct that separates matching logic from file I/O, env vars, stdin reading, and trace output. **Large effort (3-5 days).**
+
+**Defer (2 packages):**
+5. `internal/template` → `pkg/rendering` — Needs refactoring: `os.Getenv()` coupling must become explicit env maps for library use. Package name collides with stdlib `text/template`. **Medium effort, but not needed for MVP.**
+6. `internal/verify` → `pkg/verify` — Clean types, but blocked on runner decomposition (needs `State` type). **Small-Medium effort, defer to Phase 4.**
+
+**Do NOT promote (2 packages):**
+7. `internal/recorder` — CLI recording tool, not needed for gert integration (gert has own recording).
+8. `internal/platform` — Maximum platform coupling (build tags, unsafe pointers, bash/PowerShell shim templates). Zero library value.
+
+#### Dependency Graph Insight
+
+Three packages are **true leaves** (zero internal deps): `scenario`, `matcher`, `envfilter`. These can be promoted in parallel with zero risk. Everything else depends on at least one of these.
+
+The critical path is: `scenario` + `matcher` → `pkg/replay` Engine extraction → `verify`.
+
+#### Minimal Viable Promotion
+
+For gert to implement a `RecordingExecutor`, it needs only: `pkg/scenario` (load scenarios), `pkg/matcher` (match argv), `pkg/replay` (engine with state). That's 3 packages out of 8.
+
+Without template rendering support (gert gets raw stdout/stderr strings), we can even skip `template` and `envfilter` entirely for the MVP.
+
+#### The Critical Refactoring: Engine Extraction
+
+`ExecuteReplay()` in `internal/runner/replay.go` is a 200-line function mixing pure matching logic with: file I/O (scenario loading, state persistence), `os.Stdin` reading, `os.Getenv()` calls, template rendering, trace output, TTL cleanup. 
+
+The refactoring creates `pkg/replay.Engine` with a single `Match(argv []string) (*MatchResult, error)` method containing ONLY the matching algorithm and state mutation. All side effects stay in `internal/runner` as a thin CLI wrapper that delegates to `Engine.Match()`.
+
+#### Risk Assessment
+
+- **API stability**: Mitigated by v0.x versioning (Go convention: v0 can break freely)
+- **State serialization**: JSON tags already stable (used for on-disk persistence today)
+- **Premature abstraction**: Mitigated by building gert prototype first, then extracting API from actual usage
+- **Rollback**: `internal/` originals remain untouched — CLI tool works regardless of `pkg/` state
+
+#### Total Estimated Effort: 6-10 days
+
+MVP (gert can integrate): 4-7 days (Phase 1 leaves + Phase 3 engine extraction).
+
+Full analysis written to `.squad/decisions/inbox/gene-dream-feasibility.md`.
+
+---
+
+### 2026-04-03T17:01 — Scribe Team Sync & Decision Consolidation
+
+**Team produced:**
+1. **Clint:** Dream API contract & pkg/ promotion design (21.3 KB artifact)
+2. **Gene:** internal/ → pkg/ feasibility & refactoring plan (27.2 KB artifact)
+3. **Robert:** Dream consumer experience design (40.3 KB artifact)
+
+**Scribe actions completed:**
+- 3 orchestration logs (one per agent) filed
+- 1 session log filed documenting parallel design sprint
+- Decision inbox merged into .squad/decisions.md (consolidated 3 large artifacts into 3 decision entries)
+- Inbox files deleted post-merge
+- Team updates appended to agent history files
+- All metadata committed to git
+
+**Team alignment achieved:**
+- All three agents aligned on phased approach to pkg/ promotion
+- Consumer requirements (Robert) drive API design (Clint)
+- Technical feasibility (Gene) informs promotion strategy (Clint)
+- Reference implementations (Robert) validate API patterns (Clint)
+
+**Key deliverables archived:**
+- clint-dream-api-design.md → decisions.md (API contract, package boundaries, stability rules, ReplayEngine design)
+- gene-dream-feasibility.md → decisions.md (extraction roadmap, dependency graph, phased implementation plan)
+- robert-dream-consumer-experience.md → decisions.md (gert integration patterns, error UX, CI workflows, progressive adoption)

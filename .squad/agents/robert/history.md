@@ -238,3 +238,65 @@ External Go modules **cannot import** any of these. Only `cmd` is importable (ex
 - `pkg/tools/manager.go` — Tool lifecycle management
 - `pkg/tools/stdio.go` — stdio transport (CommandExecutor consumer)
 - `pkg/replay/replay.go` — ReplayExecutor (for reference)
+
+### 2026-04-03 — Dream Consumer Experience Design
+
+**Deliverable:** `robert-dream-consumer-experience.md` — full design of what it looks like FROM GERT'S SIDE to use cli-replay natively as a Go library.
+
+**Key Design Decisions:**
+
+1. **Scenario format:** Use cli-replay's YAML format directly (not gert's). cli-replay's format is strictly more expressive. Provide a one-time converter for existing gert scenarios.
+
+2. **Interface bridge:** cli-replay exports `Executor.Execute(ctx, command, args, env) (*CommandResult, error)` — same signature as gert's `CommandExecutor`. Gert wraps it with a thin adapter (~10 lines).
+
+3. **Three executor types designed:**
+   - `NewExecutor(scenario, opts)` — full replay with wildcard/regex/group/budget matching
+   - `NewRecordingExecutor(realExecutor, opts)` — wrap real executor, capture to scenario YAML
+   - `NewHybridExecutor(replayer, real, opts)` — partial replay (some live, some recorded)
+
+4. **Error experience:** Five typed error kinds (`NoMatch`, `BudgetExhausted`, `UnexpectedCmd`, `StdinMismatch`, `VerifyFailed`), each with rich diagnostics showing the command, scenario position, closest match, diff detail, and suggested fix.
+
+5. **CI story:** "Record in dev, replay in CI" via GitHub Actions workflow. Record with `--record-format cli-replay`, test with `--mode replay --replay-engine cli-replay`, JUnit reports for GitHub test UI.
+
+6. **Progressive adoption:** 3-step path from "try recording" (2 min, zero config) → "replay in CI" (15 min, add workflow) → "full scenario management" (edit patterns, groups, budgets).
+
+7. **gert changes required:** `--replay-engine cli-replay` flag, `--record-format cli-replay` flag, `replay:` config section in gert.yaml, extended `replay_mode` enum on Step, `--mode hybrid`.
+
+8. **cli-replay changes required (ordered):** Promote packages to `pkg/`, export Executor implementing CommandExecutor shape, export RecordingExecutor, typed errors, VerifyResult + formatters, HybridExecutor.
+
+**Critical Insight:** gert already has `ReplayMode string` field on `schema.Step` (line 287) — this is the hook for per-step live/recorded control. The field currently only supports `reuse_evidence` but can be extended to `recorded`, `live`, `hybrid`.
+
+**Field Mapping Verified:**
+- cli-replay `Match.Argv` ↔ gert `CLIStepConfig.Argv` (via RealExecutor)
+- cli-replay `Response{Exit, Stdout, Stderr}` ↔ gert `CommandResult{ExitCode, Stdout, Stderr}`
+- cli-replay `Match.Stdin` — no gert equivalent (gert doesn't pass stdin through CommandExecutor)
+- cli-replay `StepGroup{Mode: "unordered"}` — no gert equivalent (gert has `parallel` steps but at engine level)
+- cli-replay `CallBounds{Min, Max}` — no gert equivalent (unique to cli-replay)
+
+---
+
+### 2026-04-03T17:01 — Scribe Team Sync & Decision Consolidation
+
+**Team produced:**
+1. **Clint:** Dream API contract & pkg/ promotion design (21.3 KB artifact)
+2. **Gene:** internal/ → pkg/ feasibility & refactoring plan (27.2 KB artifact)
+3. **Robert:** Dream consumer experience design (40.3 KB artifact)
+
+**Scribe actions completed:**
+- 3 orchestration logs (one per agent) filed
+- 1 session log filed documenting parallel design sprint
+- Decision inbox merged into .squad/decisions.md (consolidated 3 large artifacts into 3 decision entries)
+- Inbox files deleted post-merge
+- Team updates appended to agent history files
+- All metadata committed to git
+
+**Team alignment achieved:**
+- All three agents aligned on phased approach to pkg/ promotion
+- Consumer requirements (Robert) drive API design (Clint)
+- Technical feasibility (Gene) informs promotion strategy (Clint)
+- Reference implementations (Robert) validate API patterns (Clint)
+
+**Key deliverables archived:**
+- clint-dream-api-design.md → decisions.md (API contract, package boundaries, stability rules, ReplayEngine design)
+- gene-dream-feasibility.md → decisions.md (extraction roadmap, dependency graph, phased implementation plan)
+- robert-dream-consumer-experience.md → decisions.md (gert integration patterns, error UX, CI workflows, progressive adoption)
