@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
