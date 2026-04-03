@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
-	"github.com/cli-replay/cli-replay/internal/verify"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/cli-replay/cli-replay/pkg/verify"
 	"github.com/spf13/cobra"
 )
 
@@ -102,7 +102,7 @@ func runVerify(_ *cobra.Command, args []string) error {
 	}
 
 	// Build structured result
-	result := verify.BuildResult(scn.Meta.Name, session, scn.FlatSteps(), state, scn.GroupRanges())
+	result := verify.BuildResult(scn.Meta.Name, session, scn.FlatSteps(), state.StepCounts, scn.GroupRanges())
 
 	// Dispatch based on format
 	if format != "text" {
