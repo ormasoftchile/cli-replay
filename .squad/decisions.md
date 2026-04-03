@@ -400,3 +400,8 @@ Wired `--mode clireplay` into `gert exec` alongside existing modes (real, dry-ru
 - All meaningful changes require team consensus
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
+
+### 2026-04-03T19:07: Commit policy directive
+**By:** Cristián (via Copilot)
+**What:** Only Scribe commits. Single committer, clean history. Code agents write files and verify builds but do NOT commit. Scribe commits all changes (both .squad/ state AND production code) after each work batch.
+**Why:** User observed inconsistent commit behavior — some agents committed, others didn't. Establishing a single committer policy for clean, predictable git history.
