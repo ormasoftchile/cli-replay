@@ -5,8 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 )
 
 // benchResult constructs a representative VerifyResult for benchmarking.
@@ -28,10 +27,9 @@ func benchResultN(n int) *VerifyResult {
 		}
 	}
 
-	state := runner.NewState("/tmp/bench.yaml", "abc123", n)
-	state.StepCounts = make([]int, n)
-	for i := range state.StepCounts {
-		state.StepCounts[i] = 1
+	stepCounts := make([]int, n)
+	for i := range stepCounts {
+		stepCounts[i] = 1
 	}
 
 	// Create groups proportional to step count
@@ -61,7 +59,7 @@ func benchResultN(n int) *VerifyResult {
 		}
 	}
 
-	return BuildResult("bench-scenario", "default", steps, state, groupRanges)
+	return BuildResult("bench-scenario", "default", steps, stepCounts, groupRanges)
 }
 
 // BenchmarkFormatJSON measures JSON formatting overhead.
@@ -100,10 +98,9 @@ func BenchmarkBuildResult(b *testing.B) {
 		}
 	}
 
-	state := runner.NewState("/tmp/bench.yaml", "abc123", 10)
-	state.StepCounts = make([]int, 10)
-	for i := range state.StepCounts {
-		state.StepCounts[i] = 1
+	stepCounts := make([]int, 10)
+	for i := range stepCounts {
+		stepCounts[i] = 1
 	}
 
 	groupRanges := []scenario.GroupRange{
@@ -112,7 +109,7 @@ func BenchmarkBuildResult(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		BuildResult("bench-scenario", "default", steps, state, groupRanges)
+		BuildResult("bench-scenario", "default", steps, stepCounts, groupRanges)
 	}
 }
 

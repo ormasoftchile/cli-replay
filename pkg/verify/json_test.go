@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +15,7 @@ func TestFormatJSON_AllPassed(t *testing.T) {
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 		{Match: scenario.Match{Argv: []string{"kubectl", "get", "pods"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{TotalSteps: 2, StepCounts: []int{1, 1}}
+	state := []int{1, 1}
 	result := BuildResult("deploy-app", "default", steps, state, nil)
 
 	var buf bytes.Buffer
@@ -42,7 +41,7 @@ func TestFormatJSON_IncompleteSteps(t *testing.T) {
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 		{Match: scenario.Match{Argv: []string{"kubectl", "apply", "-f", "app.yaml"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{TotalSteps: 2, StepCounts: []int{1, 0}}
+	state := []int{1, 0}
 	result := BuildResult("deploy-app", "default", steps, state, nil)
 
 	var buf bytes.Buffer
@@ -151,7 +150,7 @@ func TestFormatJSON_OmitsEmptyError(t *testing.T) {
 	steps := []scenario.Step{
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{TotalSteps: 1, StepCounts: []int{1}}
+	state := []int{1}
 	result := BuildResult("test", "default", steps, state, nil)
 
 	var buf bytes.Buffer

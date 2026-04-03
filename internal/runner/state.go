@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 )
 
 // State tracks scenario progress across CLI invocations.

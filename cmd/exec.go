@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
-	"github.com/cli-replay/cli-replay/internal/verify"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/cli-replay/cli-replay/pkg/verify"
 	"github.com/spf13/cobra"
 )
 
@@ -268,7 +268,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 		// Build structured result for report
 		if execFormat != "" {
-			result := verify.BuildResult(scn.Meta.Name, session, scn.FlatSteps(), updatedState, scn.GroupRanges())
+			result := verify.BuildResult(scn.Meta.Name, session, scn.FlatSteps(), updatedState.StepCounts, scn.GroupRanges())
 			writeExecReport(result, execFormat, scenarioPath)
 		}
 

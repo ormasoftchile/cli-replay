@@ -5,8 +5,7 @@ package verify
 import (
 	"strings"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 )
 
 // VerifyResult represents the structured output of a verification run.
@@ -31,12 +30,13 @@ type StepResult struct {
 	Passed    bool   `json:"passed"`
 }
 
-// BuildResult constructs a VerifyResult from a scenario's steps and the
-// replay state. The steps parameter should be the flat list of leaf steps
+// BuildResult constructs a VerifyResult from a scenario's steps and per-step
+// call counts. The steps parameter should be the flat list of leaf steps
 // (from Scenario.FlatSteps()). groupRanges may be nil for scenarios without
-// groups. If state is nil, an error result is returned with "no state found".
-func BuildResult(scenarioName, session string, steps []scenario.Step, state *runner.State, groupRanges []scenario.GroupRange) *VerifyResult {
-	if state == nil {
+// groups. If stepCounts is nil, an error result is returned with "no state
+// found".
+func BuildResult(scenarioName, session string, steps []scenario.Step, stepCounts []int, groupRanges []scenario.GroupRange) *VerifyResult {
+	if stepCounts == nil {
 		return BuildErrorResult(scenarioName, session, "no state found")
 	}
 
@@ -60,8 +60,8 @@ func BuildResult(scenarioName, session string, steps []scenario.Step, state *run
 	for i, step := range steps {
 		bounds := step.EffectiveCalls()
 		callCount := 0
-		if state.StepCounts != nil && i < len(state.StepCounts) {
-			callCount = state.StepCounts[i]
+		if i < len(stepCounts) {
+			callCount = stepCounts[i]
 		}
 
 		passed := callCount >= bounds.Min

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 	"github.com/spf13/cobra"
 )
 

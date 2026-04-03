@@ -3,8 +3,7 @@ package verify
 import (
 	"testing"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -13,12 +12,7 @@ func TestBuildResult_AllPassed(t *testing.T) {
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 		{Match: scenario.Match{Argv: []string{"kubectl", "get", "pods"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{
-		TotalSteps: 2,
-		StepCounts: []int{1, 1},
-	}
-
-	result := BuildResult("test-scenario", "default", steps, state, nil)
+	result := BuildResult("test-scenario", "default", steps, []int{1, 1}, nil)
 
 	assert.True(t, result.Passed)
 	assert.Equal(t, "test-scenario", result.Scenario)
@@ -45,12 +39,7 @@ func TestBuildResult_Incomplete(t *testing.T) {
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 		{Match: scenario.Match{Argv: []string{"kubectl", "apply", "-f", "app.yaml"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{
-		TotalSteps: 2,
-		StepCounts: []int{1, 0},
-	}
-
-	result := BuildResult("deploy-app", "default", steps, state, nil)
+	result := BuildResult("deploy-app", "default", steps, []int{1, 0}, nil)
 
 	assert.False(t, result.Passed)
 	assert.Equal(t, 2, result.TotalSteps)
@@ -88,12 +77,7 @@ func TestBuildResult_OptionalStepMinZero(t *testing.T) {
 			Calls:   &scenario.CallBounds{Min: 0, Max: 3},
 		},
 	}
-	state := &runner.State{
-		TotalSteps: 2,
-		StepCounts: []int{1, 0},
-	}
-
-	result := BuildResult("optional-test", "default", steps, state, nil)
+	result := BuildResult("optional-test", "default", steps, []int{1, 0}, nil)
 
 	assert.True(t, result.Passed, "should pass because min=0 for step 1")
 	assert.Equal(t, 2, result.TotalSteps)
@@ -153,12 +137,7 @@ func TestBuildResult_MultiCallStep(t *testing.T) {
 			Calls:   &scenario.CallBounds{Min: 2, Max: 5},
 		},
 	}
-	state := &runner.State{
-		TotalSteps: 1,
-		StepCounts: []int{3},
-	}
-
-	result := BuildResult("multi-call", "default", steps, state, nil)
+	result := BuildResult("multi-call", "default", steps, []int{3}, nil)
 
 	assert.True(t, result.Passed)
 	assert.Equal(t, 1, result.TotalSteps)
@@ -174,12 +153,7 @@ func TestBuildResult_GroupFieldEmpty(t *testing.T) {
 	steps := []scenario.Step{
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{
-		TotalSteps: 1,
-		StepCounts: []int{1},
-	}
-
-	result := BuildResult("test", "default", steps, state, nil)
+	result := BuildResult("test", "default", steps, []int{1}, nil)
 
 	assert.Empty(t, result.Steps[0].Group, "group should be empty for non-group steps")
 }
@@ -194,12 +168,7 @@ func TestBuildResult_GroupFieldPopulated(t *testing.T) {
 	groupRanges := []scenario.GroupRange{
 		{Start: 1, End: 3, Name: "pre-flight", TopIndex: 1},
 	}
-	state := &runner.State{
-		TotalSteps: 4,
-		StepCounts: []int{1, 1, 1, 1},
-	}
-
-	result := BuildResult("test", "default", steps, state, groupRanges)
+	result := BuildResult("test", "default", steps, []int{1, 1, 1, 1}, groupRanges)
 
 	// Step 0: outside group
 	assert.Empty(t, result.Steps[0].Group)

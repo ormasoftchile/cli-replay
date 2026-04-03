@@ -7,8 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/internal/scenario"
+	"github.com/cli-replay/cli-replay/pkg/scenario"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +20,7 @@ func TestFormatJUnit_AllPassed(t *testing.T) {
 		{Match: scenario.Match{Argv: []string{"kubectl", "get", "pods"}}, Respond: scenario.Response{Exit: 0}},
 		{Match: scenario.Match{Argv: []string{"kubectl", "apply", "-f", "app.yaml"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{TotalSteps: 3, StepCounts: []int{1, 1, 1}}
+	state := []int{1, 1, 1}
 	result := BuildResult("deploy-app", "default", steps, state, nil)
 
 	var buf bytes.Buffer
@@ -67,7 +66,7 @@ func TestFormatJUnit_FailureElements(t *testing.T) {
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 		{Match: scenario.Match{Argv: []string{"docker", "info"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{TotalSteps: 2, StepCounts: []int{1, 0}}
+	state := []int{1, 0}
 	result := BuildResult("deploy-app", "default", steps, state, nil)
 
 	var buf bytes.Buffer
@@ -101,7 +100,7 @@ func TestFormatJUnit_SkippedForMinZero(t *testing.T) {
 			Calls:   &scenario.CallBounds{Min: 0, Max: 3},
 		},
 	}
-	state := &runner.State{TotalSteps: 2, StepCounts: []int{1, 0}}
+	state := []int{1, 0}
 	result := BuildResult("test", "default", steps, state, nil)
 
 	var buf bytes.Buffer
@@ -152,7 +151,7 @@ func TestFormatJUnit_XMLValidity(t *testing.T) {
 	steps := []scenario.Step{
 		{Match: scenario.Match{Argv: []string{"git", "status"}}, Respond: scenario.Response{Exit: 0}},
 	}
-	state := &runner.State{TotalSteps: 1, StepCounts: []int{1}}
+	state := []int{1}
 	result := BuildResult("test", "default", steps, state, nil)
 
 	var buf bytes.Buffer
@@ -178,7 +177,7 @@ func TestFormatJUnit_AttributeMapping(t *testing.T) {
 			Calls:   &scenario.CallBounds{Min: 2, Max: 5},
 		},
 	}
-	state := &runner.State{TotalSteps: 1, StepCounts: []int{3}}
+	state := []int{3}
 	result := BuildResult("my-scenario", "default", steps, state, nil)
 
 	var buf bytes.Buffer
