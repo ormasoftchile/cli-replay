@@ -616,7 +616,7 @@ func TestNormalizeStdin(t *testing.T) {
 	assert.Equal(t, "hello\nworld", normalizeStdin("hello\r\nworld\n"))
 }
 
-func TestGlobMatch(t *testing.T) {
+func TestIsDenied(t *testing.T) {
 	tests := []struct {
 		pattern string
 		name    string
@@ -632,7 +632,7 @@ func TestGlobMatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.pattern+"_"+tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, globMatch(tt.pattern, tt.name))
+			assert.Equal(t, tt.want, isDenied(tt.name, []string{tt.pattern}))
 		})
 	}
 }

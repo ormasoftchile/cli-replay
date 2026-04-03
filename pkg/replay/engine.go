@@ -1,14 +1,14 @@
 package replay
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"path"
 	"strings"
 	"sync"
-	"text/template"
 
 	"github.com/ormasoftchile/cli-replay/pkg/matcher"
+	"github.com/ormasoftchile/cli-replay/pkg/rendering"
 	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
@@ -72,9 +72,21 @@ func New(scn *scenario.Scenario, opts ...Option) *Engine {
 // Match finds the best matching step for the given command and returns
 // the rendered response. The context is reserved for future cancellation
 // and timeout support.
+func (e *Engine) Match(ctx context.Context, name string, args []string) (*Result, error) {
+	return e.matchCore(ctx, name, args, nil)
+}
+
+// MatchWithStdin is like Match but also validates stdin content against
+// the step's match.stdin field.
+func (e *Engine) MatchWithStdin(ctx context.Context, name string, args []string, stdin string) (*Result, error) {
+	return e.matchCore(ctx, name, args, &stdin)
+}
+
+// matchCore is the shared matching logic for Match and MatchWithStdin.
+// If stdin is non-nil, stdin content is validated after finding a match.
 //
 //nolint:funlen,cyclop // Faithful extraction of the matching algorithm from internal/runner
-func (e *Engine) Match(ctx context.Context, name string, args []string) (*Result, error) {
+func (e *Engine) matchCore(_ context.Context, name string, args []string, stdin *string) (*Result, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -163,6 +175,18 @@ func (e *Engine) Match(ctx context.Context, name string, args []string) (*Result
 
 	// By this point we have a valid match.
 
+	// Stdin validation (only when stdin is provided)
+	if stdin != nil && matchedStep.Match.Stdin != "" {
+		if normalizeStdin(*stdin) != normalizeStdin(matchedStep.Match.Stdin) {
+			return &Result{ExitCode: 1},
+				&StdinMismatchError{
+					StepIndex: matchedIndex,
+					Expected:  matchedStep.Match.Stdin,
+					Received:  *stdin,
+				}
+		}
+	}
+
 	// Increment call count
 	e.st.incrementStep(matchedIndex)
 
@@ -187,139 +211,6 @@ func (e *Engine) Match(ctx context.Context, name string, args []string) (*Result
 	}
 
 	// Merge captures
-	if len(matchedStep.Respond.Capture) > 0 {
-		for k, v := range matchedStep.Respond.Capture {
-			e.st.captures[k] = v
-		}
-	}
-
-	return &Result{
-		Stdout:   stdout,
-		Stderr:   stderr,
-		ExitCode: exitCode,
-		StepIndex: matchedIndex,
-		Matched:   true,
-		Captures:  e.st.snapshotCaptures(),
-	}, nil
-}
-
-// MatchWithStdin is like Match but also validates stdin content against
-// the step's match.stdin field.
-func (e *Engine) MatchWithStdin(ctx context.Context, name string, args []string, stdin string) (*Result, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	argv := append([]string{name}, args...)
-
-	if e.st.isComplete() {
-		return &Result{ExitCode: 1}, &ScenarioCompleteError{TotalSteps: e.st.totalSteps}
-	}
-
-	// Phase 1: Skip exhausted steps
-	stepIndex := e.st.currentStep
-	for stepIndex < len(e.flatSteps) {
-		grIdx := findGroupContaining(e.groupRanges, stepIndex)
-		if grIdx >= 0 {
-			gr := e.groupRanges[grIdx]
-			if e.st.groupAllMaxesHit(gr, e.flatSteps) {
-				stepIndex = gr.End
-				e.st.exitGroup()
-				continue
-			}
-			break
-		}
-		bounds := e.flatSteps[stepIndex].EffectiveCalls()
-		if e.st.stepBudgetRemaining(stepIndex, bounds.Max) > 0 {
-			break
-		}
-		stepIndex++
-	}
-
-	if stepIndex > e.st.currentStep {
-		e.st.currentStep = stepIndex
-	}
-
-	if stepIndex >= len(e.flatSteps) {
-		return &Result{ExitCode: 1}, &ScenarioCompleteError{TotalSteps: e.st.totalSteps}
-	}
-
-	grIdx := findGroupContaining(e.groupRanges, stepIndex)
-
-	var matchedStep *scenario.Step
-	var matchedIndex int
-
-	if grIdx >= 0 {
-		matchedStep, matchedIndex = e.matchInGroup(grIdx, stepIndex, argv)
-
-		if matchedStep == nil {
-			gr := e.groupRanges[grIdx]
-			if e.st.groupAllMinsMet(gr, e.flatSteps) {
-				e.st.currentStep = gr.End
-				e.st.exitGroup()
-
-				if gr.End < len(e.flatSteps) {
-					retryStep := &e.flatSteps[gr.End]
-					if e.cfg.matchFunc(retryStep.Match.Argv, argv) {
-						matchedIndex = gr.End
-						matchedStep = retryStep
-					}
-				}
-
-				if matchedStep == nil {
-					if gr.End < len(e.flatSteps) {
-						return &Result{ExitCode: 1, StepIndex: gr.End},
-							&MismatchError{
-								StepIndex: gr.End,
-								Expected:  e.flatSteps[gr.End].Match.Argv,
-								Received:  argv,
-							}
-					}
-					return &Result{ExitCode: 1}, &ScenarioCompleteError{TotalSteps: e.st.totalSteps}
-				}
-			} else {
-				return e.groupMismatchResult(grIdx, argv)
-			}
-		}
-	} else {
-		var mErr error
-		matchedStep, matchedIndex, mErr = e.matchOrdered(stepIndex, argv)
-		if mErr != nil {
-			return &Result{ExitCode: 1, StepIndex: stepIndex}, mErr
-		}
-	}
-
-	// Stdin validation
-	if matchedStep.Match.Stdin != "" {
-		if normalizeStdin(stdin) != normalizeStdin(matchedStep.Match.Stdin) {
-			return &Result{ExitCode: 1},
-				&StdinMismatchError{
-					StepIndex: matchedIndex,
-					Expected:  matchedStep.Match.Stdin,
-					Received:  stdin,
-				}
-		}
-	}
-
-	e.st.incrementStep(matchedIndex)
-
-	if grIdx >= 0 {
-		gr := e.groupRanges[grIdx]
-		if e.st.groupAllMaxesHit(gr, e.flatSteps) {
-			e.st.currentStep = gr.End
-			e.st.exitGroup()
-		}
-	} else {
-		bounds := matchedStep.EffectiveCalls()
-		if e.st.stepBudgetRemaining(matchedIndex, bounds.Max) <= 0 {
-			e.st.currentStep = matchedIndex + 1
-		}
-	}
-
-	stdout, stderr, exitCode, err := e.renderResponse(matchedStep)
-	if err != nil {
-		return &Result{ExitCode: 1, StepIndex: matchedIndex, Matched: true}, err
-	}
-
 	if len(matchedStep.Respond.Capture) > 0 {
 		for k, v := range matchedStep.Respond.Capture {
 			e.st.captures[k] = v
@@ -511,13 +402,13 @@ func (e *Engine) renderResponse(step *scenario.Step) (stdout, stderr string, exi
 
 	// Render templates
 	if stdoutContent != "" {
-		stdoutContent, err = renderWithCaptures(stdoutContent, vars, e.st.captures)
+		stdoutContent, err = rendering.RenderWithCaptures(stdoutContent, vars, e.st.captures)
 		if err != nil {
 			return "", "", 1, fmt.Errorf("failed to render stdout template: %w", err)
 		}
 	}
 	if stderrContent != "" {
-		stderrContent, err = renderWithCaptures(stderrContent, vars, e.st.captures)
+		stderrContent, err = rendering.RenderWithCaptures(stderrContent, vars, e.st.captures)
 		if err != nil {
 			return "", "", 1, fmt.Errorf("failed to render stderr template: %w", err)
 		}
@@ -556,78 +447,20 @@ func (e *Engine) mergeVars() map[string]string {
 	return result
 }
 
-// renderWithCaptures is a self-contained template renderer (no dependency
-// on internal/template) that renders Go text/templates with vars and captures.
-func renderWithCaptures(tmpl string, vars map[string]string, captures map[string]string) (string, error) {
-	if tmpl == "" {
-		return "", nil
-	}
-
-	t, err := template.New("response").Option("missingkey=zero").Parse(tmpl)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	data := make(map[string]interface{}, len(vars)+1)
-	for k, v := range vars {
-		data[k] = v
-	}
-
-	captureMap := make(map[string]string)
-	for k, v := range captures {
-		captureMap[k] = v
-	}
-	data["capture"] = captureMap
-
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template: %w", err)
-	}
-	return buf.String(), nil
-}
-
 // isDenied checks if a variable name matches any of the deny patterns.
-// Supports glob-style matching (*, ?).
+// Uses path.Match for glob-style matching (*, ?), consistent with
+// internal/envfilter.IsDenied. Invalid patterns are skipped (fail-open).
 func isDenied(name string, patterns []string) bool {
 	for _, p := range patterns {
-		if globMatch(p, name) {
+		matched, err := path.Match(p, name)
+		if err != nil {
+			continue // invalid pattern — skip (fail-open)
+		}
+		if matched {
 			return true
 		}
 	}
 	return false
-}
-
-// globMatch is a simple glob matcher supporting * and ? wildcards.
-func globMatch(pattern, name string) bool {
-	for len(pattern) > 0 {
-		switch pattern[0] {
-		case '*':
-			// Try matching rest of pattern at every position
-			pattern = pattern[1:]
-			if pattern == "" {
-				return true
-			}
-			for i := 0; i <= len(name); i++ {
-				if globMatch(pattern, name[i:]) {
-					return true
-				}
-			}
-			return false
-		case '?':
-			if len(name) == 0 {
-				return false
-			}
-			pattern = pattern[1:]
-			name = name[1:]
-		default:
-			if len(name) == 0 || pattern[0] != name[0] {
-				return false
-			}
-			pattern = pattern[1:]
-			name = name[1:]
-		}
-	}
-	return len(name) == 0
 }
 
 // findGroupContaining returns the index into groupRanges that contains the

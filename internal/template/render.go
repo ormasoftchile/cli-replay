@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/ormasoftchile/cli-replay/internal/envfilter"
+	"github.com/ormasoftchile/cli-replay/pkg/rendering"
 )
 
 // Render renders a Go text/template with the given variables.
@@ -49,35 +50,10 @@ func RenderWithEnv(tmpl string, vars map[string]string) (string, error) {
 // steps or unordered group siblings) resolve to empty string instead of
 // erroring. Top-level variable access still errors on missing keys because
 // the template data map only contains declared keys.
+//
+// Delegates to pkg/rendering.RenderWithCaptures — the canonical implementation.
 func RenderWithCaptures(tmpl string, vars map[string]string, captures map[string]string) (string, error) {
-	if tmpl == "" {
-		return "", nil
-	}
-
-	t, err := template.New("response").Option("missingkey=zero").Parse(tmpl)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	// Build data map: flat vars + nested capture namespace
-	data := make(map[string]interface{}, len(vars)+1)
-	for k, v := range vars {
-		data[k] = v
-	}
-
-	// Add captures under the "capture" key
-	captureMap := make(map[string]string)
-	for k, v := range captures {
-		captureMap[k] = v
-	}
-	data["capture"] = captureMap
-
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return buf.String(), nil
+	return rendering.RenderWithCaptures(tmpl, vars, captures)
 }
 
 // MergeVars merges scenario vars with environment variables.
