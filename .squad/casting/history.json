@@ -1,0 +1,17 @@
+{
+  "universe_usage_history": [
+    {
+      "universe": "user-selected",
+      "used_at": "2026-04-03T16:05:00Z",
+      "project": "cli-replay"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "cli-replay-2026-04-03": {
+      "assignment_id": "cli-replay-2026-04-03",
+      "universe": "user-selected",
+      "agents": ["Clint", "Gene", "Charles", "Michael", "Robert"],
+      "created_at": "2026-04-03T16:05:00Z"
+    }
+  }
+}

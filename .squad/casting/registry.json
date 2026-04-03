@@ -1,0 +1,39 @@
+{
+  "agents": {
+    "clint": {
+      "persistent_name": "Clint",
+      "universe": "user-selected",
+      "created_at": "2026-04-03T16:05:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "gene": {
+      "persistent_name": "Gene",
+      "universe": "user-selected",
+      "created_at": "2026-04-03T16:05:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "charles": {
+      "persistent_name": "Charles",
+      "universe": "user-selected",
+      "created_at": "2026-04-03T16:05:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "michael": {
+      "persistent_name": "Michael",
+      "universe": "user-selected",
+      "created_at": "2026-04-03T16:05:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "robert": {
+      "persistent_name": "Robert",
+      "universe": "user-selected",
+      "created_at": "2026-04-03T16:05:00Z",
+      "legacy_named": false,
+      "status": "active"
+    }
+  }
+}
