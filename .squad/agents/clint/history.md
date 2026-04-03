@@ -159,3 +159,265 @@ main.go
 - Build: `Makefile` (Unix), `build.ps1` (Windows)
 - CI action: `action.yml`
 - Dependencies: `go.mod` (cobra, testify, yaml.v3, x/sys, x/term)
+
+### 2026-04-03 — Gert Codebase Architectural Analysis
+
+#### What is Gert?
+
+Gert (Governed Executable Runbook Engine) is a platform for **governed, executable, debuggable runbooks** with full traceability, evidence capture, and pluggable tool integrations. It solves the problem of turning incident response procedures (TSGs) into executable, auditable workflows with governance gates, evidence collection, and deterministic replay.
+
+#### Architecture Overview — Package Structure
+
+```
+cmd/gert/main.go         — CLI entry point (Cobra), 44KB+ mega-file
+go.work                  — Multi-module workspace: core + 6 ext modules
+├── ext/serve/           — JSON-RPC 2.0 server (VS Code extension backend)
+├── ext/tui/             — Bubble Tea terminal UI
+├── ext/debug/           — Interactive REPL debugger
+├── ext/diagram/         — Mermaid/ASCII diagram generation
+├── ext/render/          — (render support)
+├── ext/mcp/             — MCP protocol support
+pkg/
+├── schema/              — YAML parsing, JSON Schema validation, domain rules
+│   ├── schema.go        — Runbook model: Runbook, TreeNode, Step, Meta, GovernancePolicy
+│   ├── tool.go          — ToolDefinition, ToolAction, ToolArg, ToolCapture, 3 transports
+│   ├── provider.go      — Input provider schema
+│   ├── project.go       — gert.yaml project manifest
+│   └── validate.go      — JSON Schema (Draft 2020-12) + domain validation
+├── engine/              — Core execution engine (83KB engine.go)
+│   ├── engine.go        — Engine struct, Run(), runTree(), executeStep() dispatch
+│   ├── types.go         — RunState, DurableEvent, RunManifest, Annotation
+│   ├── treepath.go      — TreePath: nested execution position encoding
+│   ├── trace.go         — JSONL trace writer with secret auto-redaction
+│   ├── snapshot.go      — JSON checkpoint save/load
+│   ├── resume.go        — Run resumption from checkpoints
+│   ├── runstore.go      — RunStore interface + DirRunStore + FileRunIndex
+│   └── recover.go       — Crash recovery
+├── providers/           — Execution abstraction layer ★ CRITICAL FOR CLI-REPLAY ★
+│   ├── provider.go      — CommandExecutor, EvidenceCollector, Provider interfaces
+│   ├── cli.go           — RealExecutor: os/exec.Command with Windows fallback
+│   └── manual.go        — Interactive + DryRun + Scenario collectors
+├── replay/              — ReplayExecutor + StepScenario + TimeRebaser
+│   ├── replay.go        — ReplayExecutor implements CommandExecutor (exact argv match)
+│   ├── scenario.go      — Scenario YAML model (commands + evidence)
+│   └── step_scenario.go — StepScenario: per-step JSON responses, timestamp rebasing
+├── tools/               — Tool lifecycle manager ★ CRITICAL FOR CLI-REPLAY ★
+│   ├── manager.go       — Manager: load, validate, execute, shutdown
+│   ├── stdio.go         — stdio transport: spawn binary per call
+│   ├── jsonrpc.go       — JSON-RPC 2.0 persistent process transport
+│   └── mcp.go           — MCP (Model Context Protocol) transport
+├── governance/          — Command allowlist/denylist, redaction, env blocking, contract eval
+├── contract/            — Effects-based governance model (reads/writes/effects/risk)
+├── assertions/          — 7 assertion evaluators (contains, matches, exit_code, json_path, etc.)
+├── evidence/            — Evidence types (text, checklist, attachment) with SHA256 hashing
+├── inputs/              — Input provider framework (JSON-RPC providers, prefix routing)
+├── eval/                — Expression evaluation (expr-lang + Go templates)
+├── testing/             — Scenario replay test runner + assertion engine
+├── diagram/             — Mermaid/ASCII diagram generation
+tools/                   — Built-in tool definitions (curl.tool.yaml, ping, nslookup)
+schemas/                 — JSON Schema files (runbook-v0, runbook-v1, tool-v0, gert-project)
+vscode/                  — VS Code extension (TypeScript)
+```
+
+#### Runbook Model
+
+Runbooks are YAML files with `apiVersion: runbook/v0` (or v1). Key structure:
+
+- **`meta`**: Name, kind (mitigation/reference/composable/rca), vars, inputs, defaults, governance, prose
+- **`tools`**: Declared tool names resolved to `tools/<name>.tool.yaml`
+- **`tree`**: Execution tree of `TreeNode` objects (preferred over flat `steps`)
+- **`imports`**: Sub-runbook references for invocation
+
+**Step types** (10): `tool`, `manual`, `assert`, `branch`, `parallel`, `end`, `extension`, `cli` (legacy), `invoke` (legacy), `noop`
+
+**TreeNode** contains: Step + optional Branches (conditional forks) + optional Iterate (convergence or list loops)
+
+**Tool definitions** (.tool.yaml): Typed actions with argv templates, 3 transports (stdio, jsonrpc, mcp), governance, capture rules
+
+#### Execution Engine — Lifecycle
+
+1. **NewEngine()**: Create engine with runbook, executor, collector, mode, actor → sets up trace writer, governance engine, redaction rules, initial state
+2. **Run()**: Dispatch to `runTree()` (tree mode) or `runFlat()` (legacy)
+3. **runTree()**: Recursive tree walker — evaluates `when:` guards, executes steps, evaluates branches, handles outcomes, iterate blocks
+4. **executeStep()**: Type-based dispatch switch (10 step types) → precondition check → delay → timeout → governance contract eval → step-type handler
+5. **executeStepWithRetry()**: Wraps executeStep with configurable retry (linear/exponential backoff)
+6. **Tracing**: Every step result written to JSONL trace file; snapshots saved after each step
+7. **Outcomes**: Terminal states (resolved/escalated/no_action/needs_rca) with optional next_runbook chaining
+
+#### Tool/Command Invocation — THE INTEGRATION SURFACE
+
+**Critical interfaces for cli-replay integration:**
+
+1. **`providers.CommandExecutor`** interface:
+   ```go
+   Execute(ctx, command string, args []string, env []string) (*CommandResult, error)
+   ```
+   - `RealExecutor`: Uses `os/exec.CommandContext` directly (cli.go)
+   - `ReplayExecutor`: Matches argv against pre-recorded scenarios (replay.go)
+   - This is THE injection point — gert already swaps executors for replay mode
+
+2. **`tools.Manager`**: Manages tool lifecycle, takes a `CommandExecutor` at construction
+   - `NewManager(executor CommandExecutor, redact)` — executor is injected
+   - `executeStdio()`: Calls `m.executor.Execute(ctx, binary, argv, nil)` — goes through the injected executor
+   - `executeJSONRPC()`: Persistent process via stdin/stdout JSON-RPC
+   - `executeMCP()`: MCP protocol transport
+
+3. **Execution chain for `type: tool` steps:**
+   ```
+   Engine.executeToolStep() → ToolManager.Execute() → [validate args, resolve templates]
+     → stdio: m.executor.Execute(ctx, binary, resolvedArgv, nil)  ← CommandExecutor interface
+     → jsonrpc: proc.Call(method, params)                          ← persistent process
+     → mcp: proc.CallTool(ctx, toolName, args)                    ← MCP protocol
+   ```
+
+4. **Execution chain for `type: cli` steps (legacy):**
+   ```
+   Engine.executeCLIStep() → Gov.CheckCommand() → Executor.Execute(ctx, argv[0], argv[1:], nil)
+   ```
+
+**KEY FINDING**: Only `stdio` transport flows through CommandExecutor. JSON-RPC and MCP transports bypass it entirely — they manage their own processes.
+
+#### State Management
+
+- **RunState**: Complete execution state (run_id, mode, vars, captures, history, path, iterate state, parallel slots)
+- **Snapshots**: JSON checkpoint after every step at `.runbook/runs/<run_id>/snapshots/step-NNNN.json`
+- **Trace**: Append-only JSONL at `.runbook/runs/<run_id>/trace.jsonl`
+- **Resume**: `ResumeEngine()` loads latest snapshot, advances step index, reopens trace
+- **RunStore interface**: Abstraction over filesystem persistence (DirRunStore implementation)
+- **RunIndex**: Cross-run queries over `.runbook/index.jsonl`
+- **Lock files**: PID-based lock at `.runbook/runs/<run_id>/lock` with stale detection
+- **Annotations**: Append-only JSONL for DRI notes on runs
+
+#### Expression System
+
+Two systems:
+1. **expr-lang** (modern): For conditions (`when:`, `until:`, branch conditions) — clean syntax
+2. **Go text/template** (legacy): For string interpolation (argv, instructions) — `{{ .varName }}`
+
+Condition evaluation falls back to templates if `{{` is detected.
+
+#### Extension Points
+
+1. **CommandExecutor interface**: Swap real/replay/dry-run execution — primary integration point
+2. **EvidenceCollector interface**: Interactive/scenario/dry-run evidence collection
+3. **Provider interface**: Step-type-specific validate + execute
+4. **InputProvider interface**: External input resolution (JSON-RPC providers)
+5. **Tool definitions (.tool.yaml)**: Declarative tool registration with 3 transport modes
+6. **Extension steps**: `type: extension` runs custom JSON-RPC 2.0 binaries
+7. **OnEvent callback**: Structured event stream during execution
+8. **RunStore interface**: Pluggable persistence layer
+9. **go.work multi-module**: ext/ modules for serve, tui, debug, diagram, mcp, render
+
+#### Dependencies (go.mod)
+
+- **Cobra** — CLI framework
+- **yaml.v3** — YAML parsing
+- **expr-lang/expr** — Expression evaluation
+- **santhosh-tekuri/jsonschema/v6** — JSON Schema validation (Draft 2020-12)
+- **invopop/jsonschema** — Go struct → JSON Schema generation
+- **charmbracelet/bubbletea + bubbles + lipgloss + glamour** — TUI framework
+- **chzyer/readline** — Debugger REPL
+- **mattn/go-runewidth** — Terminal width handling
+- Go 1.25.7
+
+#### Key Design Patterns
+
+1. **Strategy Pattern** — `CommandExecutor` interface enables real/replay/dry-run swap at construction
+2. **Type Dispatch** — `executeStep()` uses switch on step.Type for 10 step types
+3. **Tree Recursion** — `runTree()` recursively walks TreeNode arrays with branch/iterate nesting
+4. **Checkpoint/Resume** — Every step persists full state; `ResumeEngine()` restores from latest
+5. **Append-Only Logging** — JSONL traces and annotations are never modified
+6. **Transport Abstraction** — Tools support stdio/jsonrpc/mcp via transport.mode in .tool.yaml
+7. **Contract-Based Governance** — Effects/reads/writes declarations evaluated against policy rules
+8. **go.work Modular Architecture** — Core engine in main module, UI/server/debug split into ext/ modules
+
+#### Critical Integration Points for cli-replay × gert
+
+1. **CommandExecutor is THE seam** — Gert's `providers.CommandExecutor` is functionally identical to what cli-replay intercepts. Gert already swaps it for replay. cli-replay could either:
+   - Replace gert's ReplayExecutor with a cli-replay-backed one (library integration)
+   - Or wrap real execution through cli-replay's PATH interception (process-level)
+
+2. **gert's ReplayExecutor is simpler than cli-replay** — Exact argv match only, no regex/wildcards, no budget/bounds, no ordered groups. cli-replay is strictly more powerful for command matching.
+
+3. **StepScenario adds per-step JSON responses** — gert extends basic replay with step-keyed responses (for jsonrpc/mcp tools), timestamp rebasing, and evidence. cli-replay would only cover the stdio transport path.
+
+4. **Recording is per-step** — gert's `--record` flag exports run artifacts as replayable scenarios. cli-replay's recording captures at the command level, not step level.
+
+5. **Everything is in `pkg/`** — Unlike cli-replay's `internal/`, gert's packages are importable. External consumers CAN import gert's types.
+
+6. **Three integration patterns viable:**
+   - **A: cli-replay as CommandExecutor** — Implement `providers.CommandExecutor` that delegates to cli-replay's matcher
+   - **B: cli-replay as PATH interceptor** — gert runs normally, cli-replay intercepts at OS level (transparent)
+   - **C: Shared scenario format** — cli-replay generates scenarios in gert's format or vice versa
+
+### 2026-04-03 — Gert Architecture Deep-Dive for Integration
+
+#### CommandExecutor: The Natural Seam
+
+Gert's `providers.CommandExecutor` interface is functionally equivalent to what cli-replay intercepts:
+
+```go
+Execute(ctx context.Context, command string, args []string, env []string) (*CommandResult, error)
+```
+
+Gert already swaps this interface for three modes:
+- `RealExecutor` — `os/exec.CommandContext` direct call
+- `ReplayExecutor` — exact argv matching against pre-recorded YAML
+- `DryRunExecutor` — no-op
+
+#### Scope Limitation: What Goes Through CommandExecutor
+
+**Only stdio transport tool steps and legacy `type: cli` steps.** JSON-RPC and MCP transports bypass entirely — they manage their own persistent processes.
+
+This means cli-replay can only intercept:
+- Commands invoked by `type: cli` steps (legacy)
+- Commands invoked by `type: tool` with `transport: stdio`
+
+Not interceptable:
+- JSON-RPC tools (routed through `jsonrpcProcess.Call()`)
+- MCP tools (routed through `mcpProcess.CallTool()`)
+- VS Code command dispatch
+
+#### Gert's ReplayExecutor vs cli-replay
+
+| Feature | gert ReplayExecutor | cli-replay |
+|---------|-------------------|------------|
+| Matching | Exact argv match | Literal, `{{ .any }}`, `{{ .regex }}` |
+| Ordering | Sequential, consumed-once | Sequential + unordered groups |
+| Call bounds | No (single use) | `calls.min`/`calls.max` |
+| State | In-memory `used[]` array | File-based JSON persistence |
+| Recording | Per-step JSON export | Session-based YAML generation |
+| Scope | Commands only | Commands + stdin matching |
+
+cli-replay is strictly more powerful for command matching. gert's replay is simpler but covers its use case.
+
+#### Three Integration Patterns
+
+**Pattern A: cli-replay as CommandExecutor implementation**
+- Implement `providers.CommandExecutor` backed by cli-replay's matching engine
+- Requires promoting cli-replay internals to `pkg/`
+- Gives gert access to regex matching, budget-based bounds, unordered groups
+- Maximum power, maximum coupling, endgame integration
+
+**Pattern B: cli-replay as transparent PATH interceptor** ← **RECOMMENDED**
+- gert executes normally with `RealExecutor`
+- cli-replay intercepts at OS level via PATH manipulation
+- Zero code coupling, zero changes to either codebase
+- Only works for stdio tools that spawn binaries
+- Covers primary use case
+
+**Pattern C: Shared scenario format**
+- Define common replay format readable by both
+- gert generates scenarios from `--record`, cli-replay consumes them (or vice versa)
+- Decoupled, compositional
+- Requires format negotiation
+
+#### Package Accessibility
+
+Unlike cli-replay (`internal/`), gert uses `pkg/` — all packages are importable. This means gert can import cli-replay (once exported), but cli-replay can also import gert's types for building scenario-compatible outputs.
+
+#### Recommendation for v1
+
+**Pattern B (transparent PATH interception)** requires zero changes to either codebase and covers the primary use case: intercepting CLI tool invocations during runbook execution.
+
+Pattern A is the strategic endgame for deep integration but requires cli-replay to export its matching engine to `pkg/`.
