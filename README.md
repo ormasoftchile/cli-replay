@@ -453,6 +453,174 @@ cli-replay clean --ttl 30m --recursive /path/to/projects
 
 **Safety guard**: `--recursive` requires `--ttl` to prevent accidental deletion of all sessions. Recursive walk skips `.git`, `node_modules`, `vendor`, and `.terraform` directories.
 
+## Library Usage
+
+cli-replay's core matching and replay engine is available as importable Go packages. This enables programmatic integration with external tools and frameworks.
+
+### Public Packages
+
+| Package | Purpose | Stability |
+|---------|---------|-----------|
+| `pkg/scenario` | Load and validate YAML scenario files | v1 stable |
+| `pkg/matcher` | Argument matching (literals, wildcards, regex) | v1 stable |
+| `pkg/replay` | In-memory replay engine with thread-safe state | v1 stable |
+| `pkg/verify` | Verification results and JSON/JUnit formatting | v1 stable |
+
+### Installation
+
+```bash
+go get github.com/ormasoftchile/cli-replay@latest
+```
+
+Module: `github.com/ormasoftchile/cli-replay`
+
+### Quick Example: Loading and Replaying a Scenario
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/replay"
+)
+
+func main() {
+	// Load scenario from YAML
+	scn, err := scenario.LoadFile("example.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	// Create replay engine
+	engine := replay.New(scn)
+	
+	// Match a command execution
+	result, err := engine.Match(context.Background(), "kubectl", []string{"get", "pods"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	log.Printf("Matched step %d: exit=%d, stdout=%q", result.StepIndex, result.ExitCode, result.Stdout)
+}
+```
+
+### Package: `pkg/scenario`
+
+Load and validate scenario files.
+
+```go
+// Load from io.Reader
+scn, err := scenario.Load(reader)
+
+// Load from file path
+scn, err := scenario.LoadFile("scenarios/test.yaml")
+
+// Validate (automatically called by Load)
+if err := scn.Validate(); err != nil {
+	log.Println("Validation error:", err)
+}
+
+// Access scenario metadata and steps
+name := scn.Meta.Name
+steps := scn.FlatSteps()           // All steps flattened (including groups)
+ranges := scn.GroupRanges()        // Group boundaries for unordered matching
+```
+
+### Package: `pkg/matcher`
+
+Argument matching for pattern-based command recognition.
+
+```go
+import "github.com/ormasoftchile/cli-replay/pkg/matcher"
+
+// Exact match (default)
+matched := matcher.ArgvMatch(
+	[]string{"kubectl", "get", "pods"},
+	[]string{"kubectl", "get", "pods"},
+) // true
+
+// With wildcards and regex
+matched := matcher.ArgvMatch(
+	[]string{"echo", "{{ .any }}", "{{ .regex "^prod-.*" }}"},
+	[]string{"echo", "hello", "prod-deployment"},
+) // true
+```
+
+### Package: `pkg/replay`
+
+In-memory replay engine with thread-safe state management.
+
+```go
+import "github.com/ormasoftchile/cli-replay/pkg/replay"
+
+// Create engine with options
+engine := replay.New(scn,
+	replay.WithVars(map[string]string{"env": "prod"}),
+	replay.WithDenyEnvPatterns([]string{"AWS_*", "SECRET_*"}),
+)
+
+// Match commands
+result, err := engine.Match(ctx, "kubectl", []string{"apply", "-f", "deploy.yaml"})
+if err != nil {
+	log.Fatal(err)
+}
+
+// Result contains matched response and state
+if result.Matched {
+	log.Printf("Exit: %d, Stdout: %s", result.ExitCode, result.Stdout)
+	log.Printf("Captures: %v", result.Captures)
+}
+
+// Snapshot state for persistence
+snapshot := engine.Snapshot()
+
+// Restore state later
+engine2 := replay.New(scn, replay.WithInitialState(snapshot))
+```
+
+### Package: `pkg/verify`
+
+Structured verification results and report formatting.
+
+```go
+import "github.com/ormasoftchile/cli-replay/pkg/verify"
+
+// Build verification result after replay
+result := verify.BuildResult(
+	"my-scenario",
+	sessionID,
+	scn.FlatSteps(),
+	stepCounts,  // per-step match counts
+	scn.GroupRanges(),
+)
+
+// Check if all steps met their call bounds
+if result.Passed {
+	log.Println("Scenario passed!")
+}
+
+// Format as JSON
+json, err := verify.ToJSON(result)
+
+// Format as JUnit XML
+junit, err := verify.ToJUnit(result)
+```
+
+### Thread Safety
+
+All package types (`Engine`, `Scenario`) are thread-safe for concurrent use:
+
+- `replay.Engine` uses internal mutex for state mutations
+- Multiple goroutines can call `Match()` concurrently
+- `Snapshot()` / `WithInitialState()` enable multi-process replay workflows
+
+### Integration: gert
+
+See [gert integration documentation](https://github.com/ormasoftchile/gert/docs/cli-replay-integration.md) for a production example: wrapping `Engine` as a `CommandExecutor` for runbook recording and replay.
+
 ## Session Isolation
 
 When running parallel CI jobs, each `cli-replay run` or `cli-replay exec` invocation generates a unique session ID (set via `CLI_REPLAY_SESSION`). State files are scoped to the session, so parallel test runs using the same scenario file do not interfere with each other.
