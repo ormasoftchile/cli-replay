@@ -185,4 +185,41 @@ Extracted the core matching/replay logic from `internal/runner/ExecuteReplay()` 
 - Tests:  All green (no regression from refactoring)
 - API stability:  Concrete type, not interface
 
-**Next phase:** Await gert integration planning and library API stabilization decisions.
+**Next phase:** Blocking issue found by Clint in review — pkg/verify imports internal/runner.State. Assigned to Charles for fix.
+
+---
+
+### 2026-04-03T18:35 — Blocking Issue Fix: pkg/verify Decoupled
+
+**Assigned by:** Clint (architectural review)
+
+#### Issue
+
+`pkg/verify.BuildResult()` method signature imports `*runner.State`. Since `runner` is internal, this makes `pkg/verify` unusable by external consumers.
+
+#### Solution
+
+Refactored `BuildResult()` to accept `[]int` (step counts) instead of `*runner.State`:
+
+**Before:**
+```go
+func BuildResult(state *runner.State) Result
+```
+
+**After:**
+```go
+func BuildResult(stepCounts []int) Result
+```
+
+This decouples the public API from internal implementation while preserving core functionality.
+
+#### Verification
+
+- ✅ All existing tests pass
+- ✅ Build clean: `go build ./...`
+- ✅ No regressions in internal/runner usage
+- ✅ `pkg/verify` now usable as true public API
+
+#### Result
+
+**Status:** COMPLETE. Blocking issue resolved. pkg/ promotion unblocked for merge.

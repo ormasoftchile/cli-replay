@@ -473,3 +473,56 @@ v0.x: API may change between minor versions. v1.0+: standard Go compatibility pr
 - clint-dream-api-design.md → decisions.md (API contract, package boundaries, stability rules, ReplayEngine design)
 - gene-dream-feasibility.md → decisions.md (extraction roadmap, dependency graph, phased implementation plan)
 - robert-dream-consumer-experience.md → decisions.md (gert integration patterns, error UX, CI workflows, progressive adoption)
+
+### 2026-04-03 — Architectural Review: pkg/ Promotion + gert Adapter
+
+#### Review Scope
+Full code review of two major deliverables: (1) cli-replay pkg/ promotion (`pkg/replay`, `pkg/scenario`, `pkg/matcher`, `pkg/verify`) and (2) gert adapter (`pkg/providers/clireplay/`).
+
+#### Verdict: CONDITIONAL APPROVE
+
+**What passed:**
+- `pkg/replay.Engine` matches the Dream API contract — concrete type, zero I/O, thread-safe, functional options
+- `Match(ctx, name, args) (*Result, error)` is the right signature
+- `StateSnapshot` round-trip works for cross-process persistence
+- All internal/ imports updated, zero stale references
+- `internal/runner.ExecuteReplay()` is now a thin CLI orchestrator
+- gert adapter correctly converts `replay.Result` (string) → `providers.CommandResult` ([]byte)
+- `RecordingExecutor.Save()` produces valid cli-replay YAML (round-trip tested)
+- 45 gert adapter tests + 72 cli-replay public API tests, all passing
+- Both repos pass `go vet ./...` clean
+
+**Blocking issue found:**
+- `pkg/verify/result.go` imports `internal/runner.State` — makes verify package unusable by external consumers
+- Assigned to Charles for fix (Gene is locked out per authorship rules)
+
+**Non-blocking issues noted:**
+- `Match()`/`MatchWithStdin()` share ~130 duplicated lines → extract `matchCore()`
+- `renderWithCaptures`/`globMatch` duplicated across pkg/replay and internal/ → future consolidation
+- `RecordingExecutor.Commands()` returns unexported type `recordedCommand`
+
+**Key architecture observations:**
+- Public surface is minimal and stable: `Engine` + `Result` + error types + options + `StateSnapshot`
+- gert adapter is ~210 LOC — thin enough to maintain, rich enough to be useful
+- `--mode clireplay` integrates cleanly into gert's existing mode dispatch
+- `replace` directive in go.mod is correct for development phase
+
+Full verdict: Merged to `.squad/decisions.md` (2026-04-03T18:35)
+
+#### Blocking Issue Resolution (Charles)
+
+Charles refactored `pkg/verify.BuildResult()` to accept `[]int` (step counts) instead of `*runner.State`. This decouples the public API from internal implementation. Tests pass, build clean. Blocking issue resolved.
+
+---
+
+### 2026-04-03T18:35 — Orchestration Complete: pkg/ Promotion Ready for Merge
+
+**Clint review verdict → merged to decisions.md**
+
+- Architectural review complete
+- Blocking issue fixed by Charles
+- 3 non-blocking items tracked for v1.1
+- pkg/ promotion approved for merge
+- gert adapter ready for review in gert repo
+
+**Status:** All work items closed. Team ready for merge queue.

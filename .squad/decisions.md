@@ -259,6 +259,35 @@ type CommandExecutor interface {
 
 ---
 
+### 2026-04-03T18:35: Architectural Review Verdict — pkg/ Promotion + gert Adapter
+
+**Author:** Clint (Lead / Architect)  
+**Date:** 2026-04-03  
+**Status:** CONDITIONAL APPROVE
+
+**Verdict:** Approve for merge with 1 blocking issue (fixed by Charles) and 3 non-blocking follow-ups.
+
+**Blocking Issue Fixed:**
+- `pkg/verify.BuildResult()` was importing `internal/runner.State` (violates public API)
+- **Resolution:** Charles refactored to accept `[]int` (step counts) instead — no longer internal coupling
+- **Status:** ✅ Fixed, all tests pass
+
+**Non-Blocking Items (v1.1+ planning):**
+1. Match() / MatchWithStdin() duplication (~130 lines) → extract shared matchCore()
+2. renderWithCaptures / globMatch duplication → consider promoting to pkg/matcher
+3. RecordingExecutor.Commands() returns unexported type → export or provide accessors
+
+**Architecture Assessment:**
+- ReplayEngine extraction is clean and matches Dream API spec
+- gert adapter is well-designed (~210 LOC), correct type conversions
+- All critical paths have test coverage
+- Public surface appropriately minimal
+- Thread-safe concurrency model verified
+
+**Recommendation:** Ship it. The blocking issue is fixed. gert integration is ready. Track non-blocking items for v1.1.
+
+---
+
 ### ReplayEngine Extraction to `pkg/replay/`
 
 **Author:** Charles (Systems Dev)  
