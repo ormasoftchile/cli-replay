@@ -300,3 +300,36 @@ External Go modules **cannot import** any of these. Only `cmd` is importable (ex
 - clint-dream-api-design.md → decisions.md (API contract, package boundaries, stability rules, ReplayEngine design)
 - gene-dream-feasibility.md → decisions.md (extraction roadmap, dependency graph, phased implementation plan)
 - robert-dream-consumer-experience.md → decisions.md (gert integration patterns, error UX, CI workflows, progressive adoption)
+
+### 2026-04-03 — cli-replay CommandExecutor Adapters Built in Gert
+
+**Deliverable:** `pkg/providers/clireplay/` in gert's repo — the bridge between gert's CommandExecutor interface and cli-replay's ReplayEngine.
+
+**What was built:**
+
+1. **ReplayExecutor** (`replay_executor.go`) — implements `providers.CommandExecutor` backed by `replay.Engine`. Thin adapter: calls `engine.Match()`, converts `replay.Result` (string stdout/stderr) → `providers.CommandResult` ([]byte stdout/stderr + duration). Exposes `Remaining()`, `Captures()`, `StepCounts()`, `Reset()`, `Snapshot()` for observability.
+
+2. **RecordingExecutor** (`recording_executor.go`) — decorator wrapping any `CommandExecutor`. Captures every command/response pair. `Save()` writes a valid cli-replay scenario YAML file using `scenario.Scenario` types directly. Thread-safe via mutex.
+
+3. **Options** (`options.go`) — `WithReplayOptions()` passes through raw `replay.Option` values (vars, env lookup, file reader, match func). `WithScenarioPath()` configures recording output path.
+
+4. **Wiring** — Added `clireplay` as a new `--mode` option in `cmd/gert/main.go` alongside real/dry-run/replay. Loads cli-replay scenario YAML via `scenario.LoadFile()`, passes runbook vars through `replay.WithVars()`.
+
+**Key design decisions:**
+- Adapter is intentionally thin (~80 LOC for replay, ~130 LOC for recording). All heavy lifting stays in cli-replay's engine.
+- Uses cli-replay's YAML format directly — no format conversion needed.
+- `go.mod` uses `replace` directive pointing to local path until cli-replay module is published.
+- RecordingExecutor builds `scenario.Scenario` programmatically — recorded scenarios are immediately replayable.
+
+**Tests:** 12 tests covering basic match, no-match, non-zero exit, multi-step ordered, template vars, reset, snapshot, recording capture, save to file, explicit path, missing path error, and interface compliance. All pass.
+
+**Field mapping confirmed:**
+- `replay.Result.Stdout` (string) → `providers.CommandResult.Stdout` ([]byte)
+- `replay.Result.Stderr` (string) → `providers.CommandResult.Stderr` ([]byte)
+- `replay.Result.ExitCode` (int) → `providers.CommandResult.ExitCode` (int)
+- Duration tracked by adapter (time.Since around Match call)
+
+**What's NOT in this adapter (by design):**
+- env parameter from CommandExecutor is not forwarded to replay engine (replay doesn't need env for matching — only for template rendering via `WithEnvLookup`)
+- stdin matching (gert's CommandExecutor interface doesn't pass stdin)
+- Evidence collection (separate interface, separate adapter if needed)
