@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // BenchmarkStateRoundTrip measures WriteState → ReadState round-trip cost

@@ -1,4 +1,4 @@
-module github.com/cli-replay/cli-replay
+module github.com/ormasoftchile/cli-replay
 
 go 1.21
 

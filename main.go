@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cli-replay/cli-replay/cmd"
-	"github.com/cli-replay/cli-replay/internal/runner"
+	"github.com/ormasoftchile/cli-replay/cmd"
+	"github.com/ormasoftchile/cli-replay/internal/runner"
 )
 
 func main() {

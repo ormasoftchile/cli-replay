@@ -48,7 +48,7 @@ go build -o cli-replay .
 # Output: cli-replay version dev
 
 # Build with version embedding
-go build -ldflags "-X github.com/cli-replay/cli-replay/cmd.Version=1.0.0-test" -o cli-replay .
+go build -ldflags "-X github.com/ormasoftchile/cli-replay/cmd.Version=1.0.0-test" -o cli-replay .
 ./cli-replay --version
 # Output: cli-replay version 1.0.0-test
 ```

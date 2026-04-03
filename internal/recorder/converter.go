@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 	"gopkg.in/yaml.v3"
 )
 

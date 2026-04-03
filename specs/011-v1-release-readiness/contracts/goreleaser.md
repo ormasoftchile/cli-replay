@@ -33,9 +33,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/cli-replay/cli-replay/cmd.Version={{.Version}}
-      - -X github.com/cli-replay/cli-replay/cmd.Commit={{.Commit}}
-      - -X github.com/cli-replay/cli-replay/cmd.Date={{.Date}}
+      - -X github.com/ormasoftchile/cli-replay/cmd.Version={{.Version}}
+      - -X github.com/ormasoftchile/cli-replay/cmd.Commit={{.Commit}}
+      - -X github.com/ormasoftchile/cli-replay/cmd.Date={{.Date}}
 
 archives:
   - id: default

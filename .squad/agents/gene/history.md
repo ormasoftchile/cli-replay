@@ -641,3 +641,28 @@ Promoted three packages from `internal/` to `pkg/`:
 - API coverage:  Complete
 
 **Next phase:** Await decision consolidation and gert integration planning.
+
+---
+
+### 2026-04-03 — Go Module Path Fix (gert integration blocker)
+
+**Problem:** `go.mod` declared module as `github.com/cli-replay/cli-replay` but the actual GitHub repo lives at `github.com/ormasoftchile/cli-replay`. This mismatch meant the Go module proxy could never resolve the module, forcing gert to use a local `replace` directive.
+
+**Root cause:** The `cli-replay` GitHub org doesn't exist — the repo is owned by `ormasoftchile`.
+
+**Fix applied:**
+1. Changed module path in `go.mod` from `github.com/cli-replay/cli-replay` → `github.com/ormasoftchile/cli-replay`
+2. Updated ALL import paths across 47 files in cli-replay (Go source, goreleaser, docs, specs)
+3. Updated ALL import paths across 9 files in gert (Go source + go.mod)
+4. gert's `replace` directive kept temporarily (points to local path) — will be removed once cli-replay is tagged and published
+
+**Verification:**
+- cli-replay: `go build ./...` ✅, `go test ./...` ✅ (all 12 packages pass)
+- gert: `go build ./...` ✅
+
+**Remaining steps (not done — awaiting Scribe commit):**
+- Commit and push cli-replay module path change
+- Tag release: `git tag v0.1.0 && git push origin v0.1.0`
+- Remove gert's `replace` directive, update require to tagged version, run `go mod tidy`
+
+**Existing tag note:** Tag `0.0.1` exists but is non-semver (missing `v` prefix). Go modules require `v` prefix. This tag is effectively invisible to the module proxy.

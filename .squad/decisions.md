@@ -365,7 +365,7 @@ Wired `--mode clireplay` into `gert exec` alongside existing modes (real, dry-ru
 - Local `replace` directive in go.mod until module is published
 
 **Consequences:**
-- Gert now depends on `github.com/cli-replay/cli-replay` (via local replace)
+- Gert now depends on `github.com/ormasoftchile/cli-replay` (via local replace)
 - Users can run `gert exec --mode clireplay --scenario path/to/scenario.yaml`
 - Future work: HybridExecutor (fallback to real for unmatched), evidence collector adapter
 - Need to publish cli-replay module or maintain workspace-level replace directive

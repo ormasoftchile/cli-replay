@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/template"
-	"github.com/cli-replay/cli-replay/pkg/replay"
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/internal/template"
+	"github.com/ormasoftchile/cli-replay/pkg/replay"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // ReplayResult contains the outcome of a replay operation.

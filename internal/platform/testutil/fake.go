@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cli-replay/cli-replay/internal/platform"
+	"github.com/ormasoftchile/cli-replay/internal/platform"
 )
 
 // FakePlatform is a configurable test double implementing platform.Platform.

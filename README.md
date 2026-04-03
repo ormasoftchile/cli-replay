@@ -67,7 +67,7 @@ Record real command executions, replay them deterministically, and verify that y
 
 ```bash
 # From source (Unix)
-go install github.com/cli-replay/cli-replay@latest
+go install github.com/ormasoftchile/cli-replay@latest
 
 # From source (Windows)
 go build -o cli-replay.exe .

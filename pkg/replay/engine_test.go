@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // helper to build a minimal scenario from flat steps

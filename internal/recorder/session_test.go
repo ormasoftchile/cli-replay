@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/platform"
+	"github.com/ormasoftchile/cli-replay/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

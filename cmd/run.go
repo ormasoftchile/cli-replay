@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/internal/runner"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 	"github.com/spf13/cobra"
 )
 

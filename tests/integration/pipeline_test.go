@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
-	"github.com/cli-replay/cli-replay/pkg/matcher"
-	"github.com/cli-replay/cli-replay/pkg/scenario"
-	"github.com/cli-replay/cli-replay/pkg/verify"
+	"github.com/ormasoftchile/cli-replay/internal/runner"
+	"github.com/ormasoftchile/cli-replay/pkg/matcher"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/verify"
 )
 
 // ═══════════════════════════════════════════════════════════════════════════════

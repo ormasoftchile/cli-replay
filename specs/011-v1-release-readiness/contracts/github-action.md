@@ -79,7 +79,7 @@ runs:
         ARCHIVE="cli-replay_${VER_NUM}_${GOOS}_${GOARCH}.${EXT}"
 
         # Download
-        URL="https://github.com/cli-replay/cli-replay/releases/download/${VERSION}/${ARCHIVE}"
+        URL="https://github.com/ormasoftchile/cli-replay/releases/download/${VERSION}/${ARCHIVE}"
         echo "Downloading ${URL}"
         curl -fsSL "${URL}" -o "${ARCHIVE}"
 

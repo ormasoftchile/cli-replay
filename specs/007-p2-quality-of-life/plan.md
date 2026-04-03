@@ -9,7 +9,7 @@ Add three quality-of-life features to cli-replay: (1) machine-readable verify ou
 
 ## Technical Context
 
-**Language/Version**: Go 1.21+ (module: `github.com/cli-replay/cli-replay`)  
+**Language/Version**: Go 1.21+ (module: `github.com/ormasoftchile/cli-replay`)  
 **Primary Dependencies**: cobra v1.8.0, gopkg.in/yaml.v3 v3.0.1, testify v1.8.4, golang.org/x/term v0.18.0  
 **Storage**: JSON state files on disk in `.cli-replay/` adjacent to scenario file  
 **Testing**: `go test` + `testify/assert`, table-driven tests  

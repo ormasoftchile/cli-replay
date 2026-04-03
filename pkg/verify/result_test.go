@@ -3,7 +3,7 @@ package verify
 import (
 	"testing"
 
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 	"github.com/stretchr/testify/assert"
 )
 

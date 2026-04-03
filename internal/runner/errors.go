@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cli-replay/cli-replay/pkg/matcher"
+	"github.com/ormasoftchile/cli-replay/pkg/matcher"
 	"golang.org/x/term"
 )
 

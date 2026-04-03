@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/runner"
+	"github.com/ormasoftchile/cli-replay/internal/runner"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"text/template"
 
-	"github.com/cli-replay/cli-replay/pkg/matcher"
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/matcher"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // Engine is an in-memory, thread-safe replay engine. It holds a loaded

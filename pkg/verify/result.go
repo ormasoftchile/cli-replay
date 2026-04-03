@@ -5,7 +5,7 @@ package verify
 import (
 	"strings"
 
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // VerifyResult represents the structured output of a verification run.

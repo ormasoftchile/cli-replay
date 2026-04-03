@@ -7,7 +7,7 @@ import (
 	"os"
 	"text/template"
 
-	"github.com/cli-replay/cli-replay/internal/envfilter"
+	"github.com/ormasoftchile/cli-replay/internal/envfilter"
 )
 
 // Render renders a Go text/template with the given variables.

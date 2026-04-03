@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/cli-replay/cli-replay/internal/platform"
+	"github.com/ormasoftchile/cli-replay/internal/platform"
 	"golang.org/x/sys/windows"
 )
 

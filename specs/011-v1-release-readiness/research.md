@@ -67,7 +67,7 @@ GoReleaser is the de facto standard for Go project releases. The project already
 
 ### Key Technical Details
 
-- **ldflags path**: `-X github.com/cli-replay/cli-replay/cmd.Version={{.Version}}` (must use full import path because `Version` lives in `cmd` package, not `main`)
+- **ldflags path**: `-X github.com/ormasoftchile/cli-replay/cmd.Version={{.Version}}` (must use full import path because `Version` lives in `cmd` package, not `main`)
 - **Additional vars**: Add `Commit` and `Date` companion vars to `cmd/root.go`
 - **Archive format**: `.tar.gz` for Linux/macOS, `.zip` for Windows (GoReleaser convention)
 - **Asset naming**: `cli-replay_<version>_<os>_<arch>.<ext>` (GoReleaser default template)
@@ -108,7 +108,7 @@ Composite actions are the simplest and most portable option — no Node.js runti
 - **OS detection**: `runner.os` returns `Linux`, `macOS`, `Windows` (title-case); must map to `GOOS`
 - **Arch detection**: `runner.arch` returns `X64`, `ARM64` (caps); must map to `GOARCH`
 - **Version resolution**: GitHub API `/releases/latest` for `latest`; direct URL for pinned versions
-- **Download URL**: `https://github.com/cli-replay/cli-replay/releases/download/{tag}/{asset}`
+- **Download URL**: `https://github.com/ormasoftchile/cli-replay/releases/download/{tag}/{asset}`
 - **PATH**: `echo "${INSTALL_DIR}" >> "$GITHUB_PATH"` (official, cross-platform, persistent)
 - **Rate limits**: Pass `github-token` input for API calls (unauthenticated limit is 60/hr shared per runner IP)
 - **Install location**: `${{ runner.temp }}/cli-replay/` — temporary, auto-cleaned
@@ -136,7 +136,7 @@ GitHub's native CI badge URL (`github.com/{owner}/{repo}/actions/workflows/{file
 
 ### Key Technical Details
 
-- **CI badge**: `![CI](https://github.com/cli-replay/cli-replay/actions/workflows/ci.yml/badge.svg?branch=main)`
+- **CI badge**: `![CI](https://github.com/ormasoftchile/cli-replay/actions/workflows/ci.yml/badge.svg?branch=main)`
 - **Go version badge**: `![Go](https://img.shields.io/badge/Go-1.21-blue?logo=go)`
 - **License badge**: `![License](https://img.shields.io/badge/License-MIT-green)`
 - All three badges can be on a single line at the top of README

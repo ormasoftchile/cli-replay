@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/platform"
+	"github.com/ormasoftchile/cli-replay/internal/platform"
 )
 
 // SessionMetadata contains user-provided metadata for the generated scenario.

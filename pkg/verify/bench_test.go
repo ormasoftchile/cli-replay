@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // benchResult constructs a representative VerifyResult for benchmarking.

@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // DryRunReport contains the information needed to display a dry-run preview

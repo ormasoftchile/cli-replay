@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cli-replay/cli-replay/internal/platform"
-	"github.com/cli-replay/cli-replay/internal/recorder"
+	"github.com/ormasoftchile/cli-replay/internal/platform"
+	"github.com/ormasoftchile/cli-replay/internal/recorder"
 	"github.com/spf13/cobra"
 )
 

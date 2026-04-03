@@ -1,7 +1,7 @@
 package replay
 
 import (
-	"github.com/cli-replay/cli-replay/pkg/scenario"
+	"github.com/ormasoftchile/cli-replay/pkg/scenario"
 )
 
 // state tracks scenario progress in memory. It mirrors the fields from
